@@ -1,11 +1,12 @@
 /* ═══════════════════════════════════════════════════════
-   ClauseClear AI — Dark Professional Legal Theme
-   Deep navy background, amber/gold accents, serif headings
+   ClauseClear AI — Dual Theme: Dark (navy) + Light (cream)
+   Amber/gold accents, Playfair Display serif headings
+   Toggle via [data-theme="light"] on <body>
    ═══════════════════════════════════════════════════════ */
 
-/* ─── Design Tokens ─── */
+/* ─── DARK Theme Tokens (default) ─── */
 :root {
-    /* Background palette — deep navy */
+    /* Background — deep navy */
     --bg-darkest: #060a14;
     --bg-primary: #0a0f1e;
     --bg-secondary: #111b2e;
@@ -13,6 +14,9 @@
     --bg-glass: rgba(26, 37, 64, 0.6);
     --bg-glass-hover: rgba(26, 37, 64, 0.85);
     --bg-input: rgba(255, 255, 255, 0.04);
+    --navbar-bg: rgba(6, 10, 20, 0.88);
+    --navbar-mobile-bg: rgba(6, 10, 20, 0.97);
+    --results-header-bg: rgba(6, 10, 20, 0.5);
 
     /* Amber / Gold accents */
     --gold-primary: #d4a853;
@@ -73,6 +77,58 @@
 
     /* Layout */
     --navbar-height: 64px;
+
+    /* Theme toggle icon */
+    --theme-icon: '☀️';
+}
+
+/* ─── LIGHT Theme Tokens ─── */
+[data-theme="light"] {
+    /* Background — warm cream & soft whites */
+    --bg-darkest: #f5f0e8;
+    --bg-primary: #faf7f2;
+    --bg-secondary: #f0ebe0;
+    --bg-elevated: #e8e0d0;
+    --bg-glass: rgba(255, 248, 235, 0.75);
+    --bg-glass-hover: rgba(255, 248, 235, 0.95);
+    --bg-input: rgba(0, 0, 0, 0.04);
+    --navbar-bg: rgba(250, 247, 242, 0.92);
+    --navbar-mobile-bg: rgba(250, 247, 242, 0.99);
+    --results-header-bg: rgba(240, 235, 224, 0.7);
+
+    /* Gold stays consistent — slightly deeper on light for contrast */
+    --gold-primary: #b8923e;
+    --gold-light: #d4a853;
+    --gold-dark: #8a6a28;
+    --gold-glow: rgba(184, 146, 62, 0.2);
+    --gold-gradient: linear-gradient(135deg, #b8923e, #d4a853, #8a6a28);
+
+    /* Borders — navy tints on cream */
+    --border-base: rgba(26, 37, 64, 0.1);
+    --border-hover: rgba(184, 146, 62, 0.4);
+    --border-focus: rgba(184, 146, 62, 0.6);
+
+    /* Text — deep navy on cream */
+    --text-primary: #1a2540;
+    --text-secondary: #3d4e6b;
+    --text-muted: #7a8aaa;
+    --text-gold: #b8923e;
+
+    /* Severity — same vivid colors, readable on light */
+    --risk-high: #c0392b;
+    --risk-medium: #d68910;
+    --risk-low: #1e8449;
+    --success: #1e8449;
+    --error: #c0392b;
+
+    /* Shadows — lighter on cream */
+    --shadow-sm: 0 2px 8px rgba(26, 37, 64, 0.08);
+    --shadow-md: 0 4px 20px rgba(26, 37, 64, 0.12);
+    --shadow-lg: 0 8px 40px rgba(26, 37, 64, 0.16);
+    --shadow-gold: 0 0 20px var(--gold-glow);
+
+    /* Theme toggle icon */
+    --theme-icon: '🌙';
 }
 
 /* ─── Reset ─── */
@@ -87,6 +143,8 @@ body {
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
     overflow-x: hidden;
+    /* Smooth transition when toggling themes */
+    transition: background var(--ease-smooth), color var(--ease-smooth);
 }
 
 a { color: var(--gold-primary); text-decoration: none; transition: color var(--ease-fast); }
@@ -104,11 +162,12 @@ h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: 600; line-height
 .navbar {
     position: fixed; top: 0; left: 0; right: 0;
     height: var(--navbar-height);
-    background: rgba(6, 10, 20, 0.85);
+    background: var(--navbar-bg);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-bottom: 1px solid var(--border-base);
     z-index: 1000;
+    transition: background var(--ease-smooth), border-color var(--ease-smooth);
 }
 
 .nav-container {
@@ -398,7 +457,8 @@ h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: 600; line-height
 .results-header {
     display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-sm);
     padding: var(--space-lg) var(--space-xl); border-bottom: 1px solid var(--border-base);
-    background: rgba(6, 10, 20, 0.5); backdrop-filter: blur(10px);
+    background: var(--results-header-bg); backdrop-filter: blur(10px);
+    transition: background var(--ease-smooth);
 }
 
 .results-badge {
@@ -742,7 +802,7 @@ h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: 600; line-height
 @media (max-width: 768px) {
     .nav-links {
         display: none; position: absolute; top: var(--navbar-height); left: 0; right: 0;
-        background: rgba(6, 10, 20, 0.95); backdrop-filter: blur(20px);
+        background: var(--navbar-mobile-bg); backdrop-filter: blur(20px);
         flex-direction: column; padding: var(--space-md); border-bottom: 1px solid var(--border-base);
     }
     .nav-links.open { display: flex; }
@@ -754,4 +814,48 @@ h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: 600; line-height
     .step-connector { transform: rotate(90deg); }
     .feature-buttons { grid-template-columns: 1fr; }
     .history-stats { grid-template-columns: 1fr; }
+}
+
+/* ═══════════════════ THEME TOGGLE BUTTON ═══════════════════ */
+
+.theme-toggle-btn {
+    width: 38px; height: 38px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-glass);
+    border: 1px solid var(--border-base);
+    cursor: pointer; font-size: 1.1rem;
+    display: flex; align-items: center; justify-content: center;
+    transition: all var(--ease-base);
+    flex-shrink: 0;
+    color: var(--text-primary);
+}
+.theme-toggle-btn:hover {
+    border-color: var(--gold-primary);
+    background: var(--bg-glass-hover);
+    transform: rotate(20deg) scale(1.1);
+    box-shadow: var(--shadow-gold);
+}
+
+/* Light theme hero orbs — softer */
+[data-theme="light"] .hero-orb-1 {
+    opacity: 0.15;
+    background: radial-gradient(circle, #d4a853, transparent);
+}
+[data-theme="light"] .hero-orb-2 {
+    opacity: 0.1;
+    background: radial-gradient(circle, #b8923e, transparent);
+}
+
+/* Light theme scrollbar */
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+    background: rgba(26, 37, 64, 0.15);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+    background: rgba(184, 146, 62, 0.4);
+}
+
+/* Light theme footer */
+[data-theme="light"] .footer {
+    background: var(--bg-secondary);
+    border-top-color: var(--border-base);
 }

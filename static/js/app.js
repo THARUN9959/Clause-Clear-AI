@@ -8,6 +8,29 @@
 // ─────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+    // ── Theme toggle ──────────────────────────────────────
+    const themeBtn = document.getElementById('theme-toggle-btn');
+    const THEME_KEY = 'clauseclear-theme';
+
+    // Apply saved theme immediately (prevents flash)
+    const savedTheme = localStorage.getItem(THEME_KEY) || 'dark';
+    applyTheme(savedTheme);
+
+    if (themeBtn) {
+        themeBtn.addEventListener('click', () => {
+            const current = document.body.getAttribute('data-theme') || 'dark';
+            const next = current === 'dark' ? 'light' : 'dark';
+            applyTheme(next);
+            localStorage.setItem(THEME_KEY, next);
+        });
+    }
+
+    function applyTheme(theme) {
+        document.body.setAttribute('data-theme', theme);
+        if (themeBtn) themeBtn.textContent = theme === 'dark' ? '☀️' : '🌙';
+    }
+
+    // ── Nav mobile toggle ─────────────────────────────────
     const navToggle = document.getElementById('nav-toggle');
     const navLinks = document.getElementById('nav-links');
     if (navToggle && navLinks) {
