@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}ClauseClear AI — Contract Simplification Companion{% endblock %}
+
+{% block content %}
+<!-- Hero -->
+<section class="hero" id="hero-section">
+    <div class="hero-bg-effects">
+        <div class="hero-orb hero-orb-1"></div>
+        <div class="hero-orb hero-orb-2"></div>
+    </div>
+    <div class="hero-content">
+        <div class="hero-badge animate-fade-in">
+            <span class="badge-dot"></span>
+            Context-Engineered AI &bull; Gemini 2.5 Flash Lite
+        </div>
+        <h1 class="hero-title animate-fade-in">
+            Simplify Any <span class="gradient-text">Legal Contract</span><br>
+            In Seconds
+        </h1>
+        <p class="hero-subtitle animate-fade-in-delay">
+            Paste or upload your contract and get instant clause summaries, plain-language translations, 
+            risk highlights, and structured tagging &mdash; all powered by context-engineered AI.
+        </p>
+        <div class="hero-actions animate-fade-in-delay-2">
+            <a href="{{ url_for('analyze') }}" class="btn btn-primary" id="hero-cta">
+                <span class="btn-icon">📝</span>
+                Analyze a Contract
+            </a>
+            <a href="#features-section" class="btn btn-secondary" id="hero-learn">
+                <span class="btn-icon">↓</span>
+                Learn More
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Features -->
+<section class="features" id="features-section">
+    <div class="features-container">
+        <h2 class="section-title">Four Powerful <span class="gradient-text">Analysis Modes</span></h2>
+        <div class="features-grid">
+            <div class="feature-card" id="feature-summarize">
+                <div class="feature-icon-wrapper"><div class="feature-icon">📋</div></div>
+                <h3 class="feature-title">Clause Summarization</h3>
+                <p class="feature-desc">Breaks the contract into individual clauses with plain-language summaries and key points for each.</p>
+                <ul class="feature-list">
+                    <li>Clause-by-clause breakdown</li>
+                    <li>Plain summary for each clause</li>
+                    <li>Key points highlighted</li>
+                </ul>
+            </div>
+            <div class="feature-card" id="feature-translate">
+                <div class="feature-icon-wrapper"><div class="feature-icon">🔤</div></div>
+                <h3 class="feature-title">Plain Language Translation</h3>
+                <p class="feature-desc">Rewrites the entire contract in simple everyday English that any non-lawyer can understand.</p>
+                <ul class="feature-list">
+                    <li>Section-by-section rewrite</li>
+                    <li>Complexity scoring</li>
+                    <li>Jargon glossary</li>
+                </ul>
+            </div>
+            <div class="feature-card" id="feature-risks">
+                <div class="feature-icon-wrapper"><div class="feature-icon">⚠️</div></div>
+                <h3 class="feature-title">Risk Highlighting</h3>
+                <p class="feature-desc">Detects risky clauses — auto-renewals, liability traps, IP issues — and rates each by severity.</p>
+                <ul class="feature-list">
+                    <li>HIGH / MEDIUM / LOW severity</li>
+                    <li>Negotiation recommendations</li>
+                    <li>Impact assessment</li>
+                </ul>
+            </div>
+            <div class="feature-card" id="feature-tags">
+                <div class="feature-icon-wrapper"><div class="feature-icon">🏷️</div></div>
+                <h3 class="feature-title">Clause Tagging</h3>
+                <p class="feature-desc">Tags every clause with categories: Payment, Termination, Liability, IP Rights, and more.</p>
+                <ul class="feature-list">
+                    <li>19+ category taxonomy</li>
+                    <li>Frequency breakdown</li>
+                    <li>Missing category alerts</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Context Engineering -->
+<section class="how-it-works" id="context-section">
+    <div class="how-container">
+        <h2 class="section-title">Built with <span class="gradient-text">Context Engineering</span></h2>
+        <div class="steps-grid">
+            <div class="step-card">
+                <div class="step-number">01</div>
+                <h3>System Prompt Design</h3>
+                <p>Every AI call has a defined role, behavioral guidelines, and capability boundaries</p>
+            </div>
+            <div class="step-connector"><span>→</span></div>
+            <div class="step-card">
+                <div class="step-number">02</div>
+                <h3>Structured I/O</h3>
+                <p>Strict JSON schemas for input and output ensure reliable, parseable results</p>
+            </div>
+            <div class="step-connector"><span>→</span></div>
+            <div class="step-card">
+                <div class="step-number">03</div>
+                <h3>Session Memory</h3>
+                <p>Last 10 turns of conversation context injected into every AI call</p>
+            </div>
+            <div class="step-connector"><span>→</span></div>
+            <div class="step-card">
+                <div class="step-number">04</div>
+                <h3>RAG Context</h3>
+                <p>Contract text grounded as retrieval context — no hallucination of clauses</p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

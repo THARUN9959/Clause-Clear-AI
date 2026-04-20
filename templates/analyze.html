@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Analyze Contract — ClauseClear AI{% endblock %}
+
+{% block content %}
+<div class="analyze-layout" id="analyze-page">
+    <!-- LEFT PANEL — Input -->
+    <div class="input-panel" id="input-panel">
+        <div class="panel-header">
+            <h2 class="panel-title">📄 Contract Input</h2>
+        </div>
+
+        <!-- Upload Zone -->
+        <div class="panel-section">
+            <label class="section-label">Upload File</label>
+            <div class="upload-zone" id="upload-zone">
+                <div class="upload-content" id="upload-content">
+                    <div class="upload-icon">📁</div>
+                    <p class="upload-text">Drag & drop or click to upload</p>
+                    <p class="upload-hint">PDF or TXT • Max 16MB</p>
+                </div>
+                <input type="file" id="file-input" accept=".pdf,.txt" hidden>
+            </div>
+            <div class="upload-status" id="upload-status" style="display:none;">
+                <div class="status-card">
+                    <span class="status-icon">✅</span>
+                    <span class="status-name" id="upload-filename">—</span>
+                    <span class="status-chars" id="upload-chars"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- OR Divider -->
+        <div class="divider"><span>or paste below</span></div>
+
+        <!-- Paste Area -->
+        <div class="panel-section">
+            <label class="section-label" for="contract-text">Paste Contract Text</label>
+            <textarea id="contract-text" class="contract-textarea" placeholder="Paste your contract text here...&#10;&#10;The AI will analyze the content you provide — it will NOT fabricate or assume any clauses." rows="10"></textarea>
+        </div>
+
+        <!-- Feature Buttons -->
+        <div class="panel-section">
+            <label class="section-label">Choose Analysis</label>
+            <div class="feature-buttons">
+                <button class="feature-btn" data-feature="summarize" id="btn-summarize">
+                    <span class="fb-icon">📋</span>
+                    <span class="fb-label">Summarize Clauses</span>
+                </button>
+                <button class="feature-btn" data-feature="translate" id="btn-translate">
+                    <span class="fb-icon">🔤</span>
+                    <span class="fb-label">Plain Language</span>
+                </button>
+                <button class="feature-btn" data-feature="risks" id="btn-risks">
+                    <span class="fb-icon">⚠️</span>
+                    <span class="fb-label">Highlight Risks</span>
+                </button>
+                <button class="feature-btn" data-feature="tags" id="btn-tags">
+                    <span class="fb-icon">🏷️</span>
+                    <span class="fb-label">Tag Clauses</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Memory Info -->
+        <div class="panel-section memory-info" id="memory-info">
+            <div class="memory-badge">
+                <span class="mem-icon">🧠</span>
+                <span>Memory: <strong id="memory-turns">0</strong>/10 turns</span>
+                <button class="mem-clear-btn" id="clear-memory-btn" title="Clear memory">✕</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT PANEL — Results -->
+    <div class="results-panel" id="results-panel">
+        <div class="panel-header results-header">
+            <h2 class="panel-title" id="results-title">📊 Analysis Results</h2>
+            <div class="results-badge" id="results-badge" style="display:none;"></div>
+        </div>
+
+        <!-- Loading State -->
+        <div class="results-loading" id="results-loading" style="display:none;">
+            <div class="loading-spinner"></div>
+            <p class="loading-text">Analyzing contract with Gemini AI...</p>
+            <p class="loading-sub">This may take 10-30 seconds depending on contract length.</p>
+        </div>
+
+        <!-- Empty State -->
+        <div class="results-empty" id="results-empty">
+            <div class="empty-icon">⚖️</div>
+            <h3>Ready to Analyze</h3>
+            <p>Paste or upload a contract, then choose an analysis mode to get started.</p>
+        </div>
+
+        <!-- Results Content -->
+        <div class="results-content" id="results-content" style="display:none;"></div>
+
+        <!-- Error State -->
+        <div class="results-error" id="results-error" style="display:none;">
+            <div class="error-icon">❌</div>
+            <h3>Analysis Error</h3>
+            <p id="error-text"></p>
+        </div>
+
+        <!-- Follow-up Chat -->
+        <div class="chat-section" id="chat-section" style="display:none;">
+            <div class="chat-divider"><span>💬 Follow-up Questions</span></div>
+            <div class="chat-messages" id="chat-messages"></div>
+            <div class="chat-input-container">
+                <form class="chat-input-form" id="chat-form">
+                    <div class="input-wrapper">
+                        <textarea id="chat-input" class="chat-input" placeholder="Ask a follow-up question about the contract..." rows="1" maxlength="2000"></textarea>
+                        <button type="submit" class="send-btn" id="send-btn" aria-label="Send">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 2L11 13"></path>
+                                <path d="M22 2L15 22L11 13L2 9L22 2Z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        initAnalyzePage();
+        {% if has_contract %}
+        document.getElementById('upload-filename').textContent = '{{ contract_name }}';
+        document.getElementById('upload-status').style.display = 'block';
+        {% endif %}
+    });
+</script>
+{% endblock %}
