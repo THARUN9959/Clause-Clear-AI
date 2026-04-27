@@ -92,7 +92,7 @@ def api_upload():
         return jsonify({"error": "No file selected."}), 400
 
     if not allowed_file(file.filename):
-        return jsonify({"error": "Invalid file type. Only PDF and TXT are accepted."}), 400
+        return jsonify({"error": "Invalid file type. Accepted formats: PDF, TXT, DOCX, PNG, JPG, JPEG."}), 400
 
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
@@ -129,6 +129,7 @@ def api_analyze():
 
     feature = data.get("feature", "")
     contract_text = data.get("contract_text", "")
+    extra_context = data.get("extra_context", "")
 
     mem = _get_memory()
 
@@ -147,7 +148,7 @@ def api_analyze():
     memory_turns = mem.get_turns()
 
     # Call Gemini with full context engineering
-    result = analyze_contract(feature, contract_text, memory_turns)
+    result = analyze_contract(feature, contract_text, memory_turns, extra_context)
 
     # Store the analysis in memory
     feature_label = FEATURE_LABELS.get(feature, feature)

@@ -155,6 +155,21 @@ function resetUploadZone() {
 
 function runAnalysis(feature) {
     const contractText = document.getElementById('contract-text').value.trim();
+    let extra_context = "";
+    if (feature === "compare") {
+        extra_context = prompt("Please paste the secondary contract text for comparison:");
+        if (!extra_context) {
+            document.querySelectorAll('.feature-btn').forEach(b => b.classList.remove('active'));
+            return;
+        }
+    } else if (feature === "multilingual") {
+        extra_context = prompt("What language do you want to translate to? (e.g., English, Spanish, French)", "English");
+        if (!extra_context) {
+            document.querySelectorAll('.feature-btn').forEach(b => b.classList.remove('active'));
+            return;
+        }
+    }
+
     const resultsLoading = document.getElementById('results-loading');
     const resultsEmpty = document.getElementById('results-empty');
     const resultsContent = document.getElementById('results-content');
@@ -176,7 +191,7 @@ function runAnalysis(feature) {
     fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feature, contract_text: contractText }),
+        body: JSON.stringify({ feature, contract_text: contractText, extra_context }),
     })
     .then(r => r.json())
     .then(data => {
@@ -227,6 +242,9 @@ function renderResults(feature, data) {
         case 'translate': return renderTranslate(data);
         case 'risks':     return renderRisks(data);
         case 'tags':      return renderTags(data);
+        case 'entities':  return renderEntities(data);
+        case 'compare':   return renderCompare(data);
+        case 'multilingual': return renderMultilingual(data);
         default:          return `<pre>${JSON.stringify(data, null, 2)}</pre>`;
     }
 }
@@ -357,6 +375,195 @@ function renderTags(d) {
         html += `<div class="result-item" style="border-color:rgba(243,156,18,0.2);">
             <p style="color:var(--risk-medium);font-size:0.9rem;">⚠️ Missing categories commonly expected in contracts:</p>
             <div style="margin-top:var(--space-sm);display:flex;gap:4px;flex-wrap:wrap;">${d.missing_categories.map(c => `<span class="freq-chip">${esc(c)}</span>`).join('')}</div>
+        </div>`;
+    }
+
+    html += renderRecommendations(d.recommendations);
+    return html;
+}
+
+function renderEntities(d) {
+    let html = renderSummaryCard(d.quick_summary);
+
+    // Parties
+    if (d.parties && d.parties.length > 0) {
+        html += `<div class="result-item">
+            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">🤝 Parties &amp; Obligations</h3>`;
+        d.parties.forEach(p => {
+            html += `<div style="margin-bottom:var(--space-md);padding:var(--space-sm);border-left:3px solid var(--gold-primary);">
+                <p style="font-weight:600;color:var(--gold-primary);">${esc(p.role || 'Party')}: <span style="color:var(--text-primary);">${esc(p.name || '—')}</span></p>
+                ${renderKeyPoints(p.key_obligations)}
+            </div>`;
+        });
+        html += `</div>`;
+    }
+
+    // Important dates
+    if (d.important_dates && d.important_dates.length > 0) {
+        html += `<div class="result-item">
+            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">📅 Key Dates</h3>
+            <table class="glossary-table">
+                <thead><tr><th>Label</th><th>Value</th><th>Note</th></tr></thead>
+                <tbody>${d.important_dates.map(dt =>
+                    `<tr><td><strong>${esc(dt.label)}</strong></td><td style="color:var(--gold-primary);">${esc(dt.value)}</td><td>${esc(dt.note)}</td></tr>`
+                ).join('')}</tbody>
+            </table>
+        </div>`;
+    }
+
+    // Payment terms
+    if (d.payment_terms) {
+        const pt = d.payment_terms;
+        html += `<div class="result-item">
+            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">💰 Payment Terms</h3>
+            <table class="glossary-table">
+                <tbody>
+                    <tr><td><strong>Amount</strong></td><td>${esc(pt.amount || '—')}</td></tr>
+                    <tr><td><strong>Currency</strong></td><td>${esc(pt.currency || '—')}</td></tr>
+                    <tr><td><strong>Schedule</strong></td><td>${esc(pt.schedule || '—')}</td></tr>
+                    <tr><td><strong>Late Penalty</strong></td><td>${esc(pt.late_penalty || '—')}</td></tr>
+                </tbody>
+            </table>
+        </div>`;
+    }
+
+    // Governing law
+    if (d.governing_law) {
+        const gl = d.governing_law;
+        html += `<div class="result-item">
+            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">⚖️ Governing Law</h3>
+            <p><strong>Jurisdiction:</strong> ${esc(gl.jurisdiction || '—')}</p>
+            <p><strong>Forum:</strong> ${esc(gl.court_or_arbitration || '—')}</p>
+            ${gl.risk_note ? `<p style="margin-top:var(--space-sm);color:var(--risk-medium);font-size:0.88rem;">⚡ ${esc(gl.risk_note)}</p>` : ''}
+        </div>`;
+    }
+
+    // Notice period
+    if (d.notice_period && d.notice_period !== 'N/A') {
+        html += `<div class="result-item">
+            <p>📣 <strong>Notice Period:</strong> ${esc(d.notice_period)}</p>
+        </div>`;
+    }
+
+    // Defined terms
+    if (d.defined_terms && d.defined_terms.length > 0) {
+        html += `<div class="result-item">
+            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">📖 Defined Terms</h3>
+            <table class="glossary-table">
+                <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+                <tbody>${d.defined_terms.map(dt =>
+                    `<tr><td><strong>${esc(dt.term)}</strong></td><td>${esc(dt.definition)}</td></tr>`
+                ).join('')}</tbody>
+            </table>
+        </div>`;
+    }
+
+    // Missing entities warning
+    if (d.missing_entities && d.missing_entities.length > 0) {
+        html += `<div class="result-item" style="border-color:rgba(243,156,18,0.2);">
+            <p style="color:var(--risk-medium);font-size:0.9rem;">⚠️ Fields not found in this contract:</p>
+            <div style="margin-top:var(--space-sm);display:flex;gap:4px;flex-wrap:wrap;">${d.missing_entities.map(e => `<span class="freq-chip">${esc(e)}</span>`).join('')}</div>
+        </div>`;
+    }
+
+    html += renderRecommendations(d.recommendations);
+    return html;
+}
+
+function renderCompare(d) {
+    let html = renderSummaryCard(d.quick_summary);
+
+    // Verdict badge
+    const verdictMap = {
+        FAVORABLE_TO_A: { label: 'Favors Original (A)', cls: 'severity-low' },
+        FAVORABLE_TO_B: { label: 'Favors Revision (B)', cls: 'severity-high' },
+        NEUTRAL:        { label: 'Neutral', cls: 'severity-low' },
+        MIXED:          { label: 'Mixed', cls: 'severity-medium' },
+    };
+    const verdict = verdictMap[d.overall_verdict] || { label: d.overall_verdict || '—', cls: 'severity-medium' };
+    html += `<div style="margin-bottom:var(--space-lg);display:flex;align-items:center;gap:var(--space-md);flex-wrap:wrap;">
+        <span>Overall Verdict: <span class="severity ${verdict.cls}">${verdict.label}</span></span>
+        <span style="color:var(--text-muted);font-size:0.85rem;">Total changes: <strong style="color:var(--gold-primary);">${d.total_changes || 0}</strong></span>
+    </div>`;
+
+    // Changes
+    if (d.changes && d.changes.length > 0) {
+        d.changes.forEach(c => {
+            const sevCls = `severity-${(c.impact_severity || 'medium').toLowerCase()}`;
+            html += `<div class="result-item">
+                <div class="result-item-header">
+                    <span class="result-item-title">🔀 ${esc(c.clause_or_section || 'Change')}</span>
+                    <span class="severity ${sevCls}">${c.impact_severity || '—'}</span>
+                    <span style="font-size:0.78rem;color:var(--text-muted);">${esc(c.change_type || '')}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm);margin:var(--space-sm) 0;">
+                    <div class="original-snippet" style="border-left-color:#e74c3c;">🅰 ${esc(c.original_text_snippet || '—')}</div>
+                    <div class="original-snippet" style="border-left-color:#27ae60;">🅱 ${esc(c.revised_text_snippet || '—')}</div>
+                </div>
+                <p class="plain-text-block">${esc(c.plain_explanation || '')}</p>
+                ${c.who_benefits ? `<p style="font-size:0.85rem;color:var(--text-muted);">👤 Benefits: <strong>${esc(c.who_benefits)}</strong></p>` : ''}
+                ${c.negotiation_note ? `<div class="negotiation-tip"><strong>💡 Negotiation note:</strong> ${esc(c.negotiation_note)}</div>` : ''}
+            </div>`;
+        });
+    }
+
+    // Unchanged key clauses
+    if (d.unchanged_key_clauses && d.unchanged_key_clauses.length > 0) {
+        html += `<div class="result-item" style="border-color:rgba(39,174,96,0.2);">
+            <p style="color:var(--risk-low);font-weight:600;margin-bottom:var(--space-sm);">✅ Key clauses unchanged:</p>
+            <ul class="key-points">${d.unchanged_key_clauses.map(cl => `<li>${esc(cl)}</li>`).join('')}</ul>
+        </div>`;
+    }
+
+    // Executive recommendation
+    if (d.executive_recommendation) {
+        html += `<div class="result-summary-card" style="margin-top:var(--space-lg);border-color:var(--gold-primary);">
+            <h3>🎯 Executive Recommendation</h3>
+            <p>${esc(d.executive_recommendation)}</p>
+        </div>`;
+    }
+
+    html += renderRecommendations(d.recommendations);
+    return html;
+}
+
+function renderMultilingual(d) {
+    let html = `<div class="result-summary-card">
+        <h3>🌐 Translated to: <span style="color:var(--gold-primary);">${esc(d.target_language || '—')}</span></h3>
+        <p>${esc(d.quick_summary || '')}</p>
+    </div>`;
+
+    if (d.sections && d.sections.length > 0) {
+        d.sections.forEach(s => {
+            html += `<div class="result-item">
+                <div class="result-item-header">
+                    <span class="result-item-title">${esc(s.translated_heading || s.original_heading || 'Section')}</span>
+                    <span class="result-item-number">§${s.section_number}</span>
+                </div>
+                <p class="plain-text-block">${esc(s.translated_text || '')}</p>
+                ${s.key_obligation ? `<p style="margin-top:var(--space-sm);font-size:0.85rem;color:var(--gold-primary);">🔑 ${esc(s.key_obligation)}</p>` : ''}
+            </div>`;
+        });
+    }
+
+    // Critical terms glossary
+    if (d.critical_terms_glossary && d.critical_terms_glossary.length > 0) {
+        html += `<div class="result-item">
+            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">📖 Critical Terms Glossary</h3>
+            <table class="glossary-table">
+                <thead><tr><th>Original Term</th><th>Translated Term</th><th>Plain Meaning</th></tr></thead>
+                <tbody>${d.critical_terms_glossary.map(g =>
+                    `<tr><td><strong>${esc(g.original_term)}</strong></td><td style="color:var(--gold-primary);">${esc(g.translated_term)}</td><td>${esc(g.plain_explanation)}</td></tr>`
+                ).join('')}</tbody>
+            </table>
+        </div>`;
+    }
+
+    // Translation notes
+    if (d.translation_notes && d.translation_notes.length > 0) {
+        html += `<div class="result-item" style="border-color:rgba(243,156,18,0.2);">
+            <p style="color:var(--risk-medium);font-weight:600;margin-bottom:var(--space-sm);">📝 Translator Notes:</p>
+            <ul class="key-points">${d.translation_notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
         </div>`;
     }
 

@@ -16,9 +16,9 @@
                 <div class="upload-content" id="upload-content">
                     <div class="upload-icon">📁</div>
                     <p class="upload-text">Drag & drop or click to upload</p>
-                    <p class="upload-hint">PDF or TXT • Max 16MB</p>
+                    <p class="upload-hint">PDF, TXT, DOCX, PNG, JPG • Max 16MB</p>
                 </div>
-                <input type="file" id="file-input" accept=".pdf,.txt" hidden>
+                <input type="file" id="file-input" accept=".pdf,.txt,.docx,.png,.jpg,.jpeg" hidden>
             </div>
             <div class="upload-status" id="upload-status" style="display:none;">
                 <div class="status-card">
@@ -57,6 +57,18 @@
                 <button class="feature-btn" data-feature="tags" id="btn-tags">
                     <span class="fb-icon">🏷️</span>
                     <span class="fb-label">Tag Clauses</span>
+                </button>
+                <button class="feature-btn" data-feature="entities" id="btn-entities">
+                    <span class="fb-icon">🔍</span>
+                    <span class="fb-label">Extract Entities</span>
+                </button>
+                <button class="feature-btn feature-btn--accent" data-feature="compare" id="btn-compare">
+                    <span class="fb-icon">🔀</span>
+                    <span class="fb-label">Compare Contracts</span>
+                </button>
+                <button class="feature-btn feature-btn--accent" data-feature="multilingual" id="btn-multilingual">
+                    <span class="fb-icon">🌐</span>
+                    <span class="fb-label">Translate Language</span>
                 </button>
             </div>
         </div>

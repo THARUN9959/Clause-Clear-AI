@@ -220,6 +220,152 @@ Return ONLY the JSON object above. No other text.
 """
 
 # ═══════════════════════════════════════════════════════════════
+# FEATURE 5: Key Entity Extraction (NER)
+# ═══════════════════════════════════════════════════════════════
+
+ENTITY_EXTRACTION_PROMPT = BASE_SYSTEM_PROMPT + """
+=== TASK: KEY ENTITY EXTRACTION ===
+Extract all critical metadata and named entities from the contract into a structured table.
+Focus on: party names, effective/expiration dates, payment terms, governing law/jurisdiction,
+key obligations for each party, notice periods, and any defined monetary amounts.
+
+=== REQUIRED JSON OUTPUT SCHEMA ===
+{
+  "quick_summary": "One-liner describing what kind of contract this is and who the parties are",
+  "parties": [
+    {
+      "role": "e.g. Buyer, Seller, Licensor, Licensee, Employer, Employee",
+      "name": "Legal name as written in the contract",
+      "key_obligations": ["Main obligation 1", "Main obligation 2"]
+    }
+  ],
+  "important_dates": [
+    {
+      "label": "e.g. Effective Date, Expiration Date, Renewal Deadline",
+      "value": "Date or period as written in the contract",
+      "note": "Brief plain-English note about the significance of this date"
+    }
+  ],
+  "payment_terms": {
+    "amount": "Total amount or rate, or N/A",
+    "currency": "Currency code or N/A",
+    "schedule": "Payment schedule plain description (e.g. monthly, on delivery)",
+    "late_penalty": "Penalty clause for late payment, or N/A"
+  },
+  "governing_law": {
+    "jurisdiction": "State/Country",
+    "court_or_arbitration": "Specified forum for disputes",
+    "risk_note": "Brief note on whether this jurisdiction is favorable or concerning"
+  },
+  "notice_period": "e.g. 30 days written notice, or N/A",
+  "defined_terms": [
+    {
+      "term": "Defined term as used in the contract",
+      "definition": "Its definition from the contract"
+    }
+  ],
+  "missing_entities": ["Critical fields that could not be found in the contract"],
+  "recommendations": ["Recommendation 1", "Recommendation 2"]
+}
+
+Return ONLY the JSON object above. No other text.
+
+{memory_block}
+
+=== GROUNDING CONTEXT (CONTRACT TEXT) ===
+{contract_text}
+"""
+
+# ═══════════════════════════════════════════════════════════════
+# FEATURE 6: Contract Comparison / Semantic Redlining
+# ═══════════════════════════════════════════════════════════════
+
+CONTRACT_COMPARE_PROMPT = BASE_SYSTEM_PROMPT + """
+=== TASK: CONTRACT COMPARISON & SEMANTIC REDLINING ===
+The user has provided TWO versions of a contract: the ORIGINAL (Version A) and a REVISED version (Version B).
+Identify every meaningful difference — not just textual changes, but their LEGAL and PRACTICAL impact.
+Do NOT simply list word changes; explain what each change means for each party.
+
+=== REQUIRED JSON OUTPUT SCHEMA ===
+{
+  "quick_summary": "One-liner overview of how the revision changed the contract's overall balance",
+  "overall_verdict": "FAVORABLE_TO_A or FAVORABLE_TO_B or NEUTRAL or MIXED",
+  "total_changes": <number>,
+  "changes": [
+    {
+      "change_number": <number>,
+      "clause_or_section": "Which clause/section was changed",
+      "original_text_snippet": "Brief quote from Version A",
+      "revised_text_snippet": "Brief quote from Version B",
+      "change_type": "ADDITION or DELETION or MODIFICATION or REORDERING",
+      "impact_severity": "HIGH or MEDIUM or LOW",
+      "plain_explanation": "Plain-English explanation of what changed and why it matters",
+      "who_benefits": "Party A, Party B, or Both/Neutral",
+      "negotiation_note": "Suggested counter-position or acceptance rationale"
+    }
+  ],
+  "unchanged_key_clauses": ["Important clauses that were NOT changed"],
+  "executive_recommendation": "Overall recommendation — should the revised version be accepted, rejected, or negotiated?",
+  "recommendations": ["Specific recommendation 1", "Specific recommendation 2"]
+}
+
+Return ONLY the JSON object above. No other text.
+
+{memory_block}
+
+=== GROUNDING CONTEXT — VERSION A (ORIGINAL CONTRACT) ===
+{contract_text}
+
+=== GROUNDING CONTEXT — VERSION B (REVISED CONTRACT) ===
+{extra_context}
+"""
+
+# ═══════════════════════════════════════════════════════════════
+# FEATURE 7: Multilingual Translation
+# ═══════════════════════════════════════════════════════════════
+
+MULTILINGUAL_PROMPT = BASE_SYSTEM_PROMPT + """
+=== TASK: MULTILINGUAL PLAIN-LANGUAGE TRANSLATION ===
+Translate the contract into the TARGET LANGUAGE specified below, using plain everyday language
+that a non-lawyer speaker of that language can easily understand.
+Preserve the meaning and legal intent faithfully — do NOT simplify away important obligations.
+
+=== TARGET LANGUAGE ===
+{extra_context}
+
+=== REQUIRED JSON OUTPUT SCHEMA ===
+{
+  "target_language": "{extra_context}",
+  "quick_summary": "One-sentence overview of the contract in the target language",
+  "sections": [
+    {
+      "section_number": <number>,
+      "original_heading": "Original section heading (in source language)",
+      "translated_heading": "Section heading in target language",
+      "translated_text": "Full plain-language translation of this section in the target language",
+      "key_obligation": "The single most important obligation from this section"
+    }
+  ],
+  "critical_terms_glossary": [
+    {
+      "original_term": "Legal term in original language",
+      "translated_term": "Term in target language",
+      "plain_explanation": "What this term means in plain terms"
+    }
+  ],
+  "translation_notes": ["Any note about terms that have no direct equivalent in the target language"],
+  "recommendations": ["Recommendation 1"]
+}
+
+Return ONLY the JSON object above. No other text.
+
+{memory_block}
+
+=== GROUNDING CONTEXT (CONTRACT TEXT) ===
+{contract_text}
+"""
+
+# ═══════════════════════════════════════════════════════════════
 # FOLLOW-UP CHAT PROMPT
 # ═══════════════════════════════════════════════════════════════
 
@@ -257,6 +403,9 @@ FEATURE_PROMPTS = {
     "translate": PLAIN_LANGUAGE_PROMPT,
     "risks": RISK_HIGHLIGHT_PROMPT,
     "tags": CLAUSE_TAGGING_PROMPT,
+    "entities": ENTITY_EXTRACTION_PROMPT,
+    "compare": CONTRACT_COMPARE_PROMPT,
+    "multilingual": MULTILINGUAL_PROMPT,
 }
 
 FEATURE_LABELS = {
@@ -264,6 +413,9 @@ FEATURE_LABELS = {
     "translate": "Plain Language Translation",
     "risks": "Risk Highlight Generation",
     "tags": "Structured Clause Tagging",
+    "entities": "Key Entity Extraction",
+    "compare": "Contract Comparison",
+    "multilingual": "Multilingual Translation",
 }
 
 
@@ -343,14 +495,18 @@ def _call_gemini(prompt_text):
 # PUBLIC API FUNCTIONS
 # ═══════════════════════════════════════════════════════════════
 
-def analyze_contract(feature, contract_text, memory_turns=None):
+def analyze_contract(feature, contract_text, memory_turns=None, extra_context=""):
     """
-    Run one of the 4 analysis features on a contract.
+    Run one of the analysis features on a contract.
 
     Args:
-        feature: One of 'summarize', 'translate', 'risks', 'tags'.
-        contract_text: The full contract text to analyze.
+        feature: One of 'summarize', 'translate', 'risks', 'tags',
+                 'entities', 'compare', 'multilingual'.
+        contract_text: The full contract text to analyze (Version A for compare).
         memory_turns: List of previous conversation turns for context.
+        extra_context: Secondary data required by some features:
+                       - 'compare'      → Version B contract text
+                       - 'multilingual' → Target language string (e.g. "Spanish")
 
     Returns:
         Parsed JSON response dict from Gemini.
@@ -361,12 +517,19 @@ def analyze_contract(feature, contract_text, memory_turns=None):
     if not contract_text or not contract_text.strip():
         return {"error": "No contract text provided. Please paste text or upload a file."}
 
+    # Validate extra_context for features that require it
+    if feature == "compare" and not (extra_context or "").strip():
+        return {"error": "Contract Comparison requires a second (revised) contract text."}
+    if feature == "multilingual" and not (extra_context or "").strip():
+        return {"error": "Multilingual Translation requires a target language (e.g. 'Spanish')."}
+
     prompt_template = FEATURE_PROMPTS[feature]
     memory_block = _build_memory_block(memory_turns or [])
 
     prompt = (prompt_template
                .replace("{memory_block}", memory_block)
-               .replace("{contract_text}", contract_text[:15000]))
+               .replace("{contract_text}", contract_text[:15000])
+               .replace("{extra_context}", (extra_context or "")[:8000]))
 
     return _call_gemini(prompt)
 

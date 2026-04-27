@@ -427,6 +427,9 @@ h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: 600; line-height
 .feature-btn:hover { border-color: var(--gold-primary); color: var(--gold-primary); background: rgba(212, 168, 83, 0.05); }
 .feature-btn.active { border-color: var(--gold-primary); color: var(--gold-primary); background: rgba(212, 168, 83, 0.1); box-shadow: var(--shadow-gold); }
 .feature-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.feature-btn--accent { border-color: rgba(52, 152, 219, 0.25); color: var(--text-secondary); }
+.feature-btn--accent:hover { border-color: #3498db; color: #3498db; background: rgba(52, 152, 219, 0.05); }
+.feature-btn--accent.active { border-color: #3498db; color: #3498db; background: rgba(52, 152, 219, 0.1); box-shadow: 0 0 20px rgba(52, 152, 219, 0.15); }
 .fb-icon { font-size: 1.2rem; flex-shrink: 0; }
 .fb-label { font-weight: 500; }
 
