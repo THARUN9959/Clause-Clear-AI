@@ -1,97 +1,157 @@
 {% extends "base.html" %}
-{% block title %}Session History — ClauseClear AI{% endblock %}
+{% block title %}History — ClauseClear AI{% endblock %}
 
 {% block content %}
 <div class="history-page" id="history-page">
     <div class="history-header">
-        <h1 class="history-title"><span class="gradient-text">Session History</span></h1>
-        <p class="history-subtitle">Your conversation memory and analysis log for this session.</p>
+        <h1 class="history-title"><span class="gradient-text">Analysis History</span></h1>
+        <p class="history-subtitle">All past contract analyses for this session — stored locally in SQLite.</p>
     </div>
 
-    <!-- Memory Stats -->
+    <!-- Stats row -->
     <div class="history-stats">
         <div class="stat-card">
-            <div class="stat-number">{{ memory_summary.turn_count }}</div>
-            <div class="stat-label">Memory Turns</div>
-            <div class="stat-sub">of {{ memory_summary.max_turns }} max</div>
+            <div class="stat-number">{{ total }}</div>
+            <div class="stat-label">Total Analyses</div>
         </div>
         <div class="stat-card">
-            <div class="stat-number">{{ memory_summary.analysis_count }}</div>
-            <div class="stat-label">Analyses Run</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-number">{% if memory_summary.has_contract %}✅{% else %}—{% endif %}</div>
-            <div class="stat-label">Contract Loaded</div>
-            <div class="stat-sub">{{ memory_summary.contract_name or 'None' }}</div>
+            <div class="stat-number">{{ page }}/{{ total_pages }}</div>
+            <div class="stat-label">Page</div>
         </div>
     </div>
 
-    <!-- Analysis History -->
-    <div class="history-section">
-        <h2 class="section-subtitle">Analysis Log</h2>
-        {% if analysis_history %}
-        <div class="history-timeline">
-            {% for entry in analysis_history %}
-            <div class="timeline-item">
-                <div class="timeline-dot"></div>
-                <div class="timeline-card">
-                    <div class="timeline-header">
-                        <span class="timeline-feature">{{ entry.feature }}</span>
-                        <span class="timeline-time">{{ entry.timestamp[:19] }}</span>
-                    </div>
-                    <p class="timeline-summary">{{ entry.summary }}</p>
-                    <p class="timeline-contract">📄 {{ entry.contract_name }}</p>
-                </div>
+    <!-- Analysis cards -->
+    {% if analyses %}
+    <div class="history-grid" id="history-grid">
+        {% for a in analyses %}
+        <div class="history-card" id="card-{{ a.id }}" data-id="{{ a.id }}">
+            <div class="hcard-top">
+                <span class="contract-type-badge badge-{{ a.contract_type | lower }}">{{ a.contract_type }}</span>
+                <span class="health-badge health-badge--{{ 'a' if a.health_score >= 90 else 'b' if a.health_score >= 80 else 'c' if a.health_score >= 70 else 'd' if a.health_score >= 60 else 'f' }}">
+                    {{ a.health_score }}/100
+                </span>
             </div>
-            {% endfor %}
+            <div class="hcard-filename">📄 {{ a.filename }}</div>
+            <div class="hcard-date">{{ a.created_at }}</div>
+            <div class="hcard-actions">
+                <button class="btn btn-sm btn-primary" onclick="viewAnalysis({{ a.id }})">👁 View Again</button>
+                <button class="btn btn-sm btn-outline" onclick="exportAnalysis({{ a.id }})">📄 PDF</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteAnalysis({{ a.id }})">🗑 Delete</button>
+            </div>
         </div>
-        {% else %}
-        <div class="history-empty">
-            <p>No analyses performed yet. <a href="{{ url_for('analyze') }}">Start analyzing a contract →</a></p>
-        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('history', page=page-1) }}" class="btn btn-outline btn-sm">← Prev</a>
+        {% endif %}
+        <span class="page-indicator">Page {{ page }} of {{ total_pages }}</span>
+        {% if page < total_pages %}
+        <a href="{{ url_for('history', page=page+1) }}" class="btn btn-outline btn-sm">Next →</a>
         {% endif %}
     </div>
+    {% endif %}
 
-    <!-- Conversation Turns -->
-    <div class="history-section">
-        <h2 class="section-subtitle">Conversation Memory (Last {{ memory_summary.max_turns }} Turns)</h2>
-        {% if memory_summary.turns %}
-        <div class="turns-list">
-            {% for turn in memory_summary.turns %}
-            <div class="turn-item turn-{{ turn.role }}">
-                <div class="turn-avatar">{% if turn.role == 'user' %}👤{% else %}🤖{% endif %}</div>
-                <div class="turn-content">
-                    <div class="turn-meta">
-                        <span class="turn-role">{{ turn.role | upper }}</span>
-                        <span class="turn-time">{{ turn.timestamp[:19] }}</span>
-                    </div>
-                    <p class="turn-text">{{ turn.content }}</p>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="history-empty">
-            <p>No conversation turns recorded yet.</p>
-        </div>
-        {% endif %}
+    {% else %}
+    <div class="history-empty">
+        <div class="empty-icon">📂</div>
+        <p>No analyses yet. <a href="{{ url_for('analyze') }}">Analyze a contract →</a></p>
     </div>
+    {% endif %}
 
-    <!-- Actions -->
     <div class="history-actions">
-        <button class="btn btn-outline" id="clear-all-btn" onclick="clearAllMemory()">🗑️ Clear All Memory</button>
-        <a href="{{ url_for('analyze') }}" class="btn btn-primary">📝 Back to Analysis</a>
+        <a href="{{ url_for('analyze') }}" class="btn btn-primary">📝 New Analysis</a>
+    </div>
+</div>
+
+<!-- View Again modal -->
+<div class="modal-overlay" id="view-modal" style="display:none;" role="dialog" aria-modal="true">
+    <div class="modal-card">
+        <div class="modal-header">
+            <h3 id="modal-title">Contract Analysis</h3>
+            <button class="modal-close" onclick="closeModal()" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    function clearAllMemory() {
-        if (!confirm('Clear all session memory? This cannot be undone.')) return;
-        fetch('/api/clear-memory', { method: 'POST' })
-            .then(r => r.json())
-            .then(() => window.location.reload());
-    }
+function getCsrfToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.content || '';
+}
+
+function viewAnalysis(id) {
+    fetch(`/api/history/${id}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            const r = data.result;
+            const grade = r.health_grade || '?';
+            const gradeColors = {A:'#16a34a',B:'#14b8a6',C:'#eab308',D:'#f97316',F:'#ef4444'};
+            const color = gradeColors[grade] || '#888';
+            let html = `
+                <div class="modal-meta">
+                    <span class="contract-type-badge badge-${(data.contract_type||'unknown').toLowerCase()}">${data.contract_type}</span>
+                    <span class="health-badge" style="background:${color}">${data.health_score}/100 &nbsp;${grade}</span>
+                </div>
+                <p class="modal-verdict">${DOMPurify.sanitize(r.health_verdict || '')}</p>
+                <p class="modal-summary">${DOMPurify.sanitize(r.summary || '')}</p>
+                <h4>Risks (${(r.risks||[]).length})</h4>
+                <ul class="modal-risks">
+                    ${(r.risks||[]).map(risk => `
+                        <li class="modal-risk sev-${(risk.severity||'low').toLowerCase()}">
+                            <strong>${DOMPurify.sanitize(risk.clause)}</strong>
+                            [${DOMPurify.sanitize(risk.severity)}]
+                            <br>${DOMPurify.sanitize(risk.explanation)}
+                        </li>`).join('')}
+                </ul>
+                <div class="modal-footer-note">Analyzed: ${data.created_at}</div>
+                <div style="text-align:center;margin-top:1rem;">
+                    <button class="btn btn-sm btn-primary" onclick="exportAnalysis(${id})">📄 Download PDF</button>
+                </div>
+            `;
+            document.getElementById('modal-title').textContent = data.filename;
+            document.getElementById('modal-body').innerHTML = html;
+            document.getElementById('view-modal').style.display = 'flex';
+        })
+        .catch(() => showToast('Failed to load analysis.', 'error'));
+}
+
+function closeModal() {
+    document.getElementById('view-modal').style.display = 'none';
+}
+
+function exportAnalysis(id) {
+    window.open(`/api/export/${id}`, '_blank');
+}
+
+function deleteAnalysis(id) {
+    if (!confirm('Delete this analysis? This cannot be undone.')) return;
+    fetch(`/api/history/${id}`, {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': getCsrfToken() }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            const card = document.getElementById(`card-${id}`);
+            if (card) card.remove();
+            showToast('Analysis deleted.', 'success');
+        } else {
+            showToast(data.error || 'Delete failed.', 'error');
+        }
+    })
+    .catch(() => showToast('Delete request failed.', 'error'));
+}
+
+// Close modal on overlay click
+document.getElementById('view-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+});
 </script>
 {% endblock %}

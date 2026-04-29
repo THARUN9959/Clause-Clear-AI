@@ -1,6 +1,13 @@
 # Environment
 .env
 
+# Database
+*.sqlite
+*.db
+
+# Logs
+logs/
+
 # Python
 __pycache__/
 *.pyc
@@ -12,7 +19,7 @@ build/
 venv/
 .venv/
 
-# Uploads
+# Uploads (keep placeholder)
 uploads/*
 !uploads/.gitkeep
 
@@ -24,6 +31,6 @@ uploads/*
 .DS_Store
 Thumbs.db
 
-# Kluster
+# Kluster / Agent
 .kluster/
 .agent/

@@ -3,15 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="ClauseClear AI — Contract Simplification Companion. Simplify legal contracts with AI-powered clause summarization, plain language translation, risk highlighting, and structured tagging.">
+    <meta name="description" content="ClauseClear AI — AI-powered contract analysis. Understand risks, obligations, and health scores for any legal contract.">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}ClauseClear AI{% endblock %}</title>
 
-    <!-- Google Fonts — Serif for headings, Sans for body -->
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- DOMPurify — sanitize all LLM output before innerHTML insertion -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
 
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    <!-- Apply theme BEFORE render to prevent flash -->
+    <script>
+        (function () {
+            var t = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -34,6 +47,9 @@
         </div>
     </nav>
 
+    <!-- Toast container -->
+    <div id="toast-container" aria-live="polite"></div>
+
     <!-- Main Content -->
     <main class="main-content">
         {% block content %}{% endblock %}
@@ -42,7 +58,7 @@
     <!-- Footer -->
     <footer class="footer" id="main-footer">
         <div class="footer-content">
-            <p>&copy; 2026 ClauseClear AI &mdash; Powered by Gemini AI &bull; For informational purposes only, not legal advice.</p>
+            <p>&copy; 2026 ClauseClear AI &mdash; Powered by Gemini AI &bull; For informational purposes only &mdash; not legal advice.</p>
         </div>
     </footer>
 

@@ -1,63 +1,192 @@
 """
-ClauseClear AI — Gemini Service with Context Engineering.
+ClauseClear AI — Unified Gemini Service.
 
-Every Gemini API call follows these context engineering principles:
-1. System Prompt: Role definition + behavioral guidelines + capability boundaries
-2. Structured I/O: JSON input schema → JSON output schema (no markdown, no preamble)
-3. Session Memory: Last 10 conversation turns injected as CONVERSATION MEMORY
-4. RAG-style Context: Contract text injected as GROUNDING CONTEXT
-5. Instruction Hierarchy: Safety > User constraints > Output format > Enhancement
-6. Progressive Disclosure: Summary → Detailed analysis → Recommendations
+Architecture:
+  - Single unified analysis call returning full structured JSON (Phase 2)
+  - Contract-type-specific prompt templates (Phase 2)
+  - Benchmark injection (Phase 3)
+  - Self-critique agent loop (Phase 15)
+  - Vanilla RAG via text-embedding-004 + cosine similarity (Phase 16)
+  - Legacy feature prompts retained for summarize/translate/compare/multilingual
 """
 
 import json
+import math
 import time
+import logging
 from google import genai
 from config import Config
+from services.benchmark_service import format_benchmark_for_prompt
 
-# Initialize the Gemini client
+logger = logging.getLogger(__name__)
+
 client = genai.Client(api_key=Config.GEMINI_API_KEY)
 
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 2
 
 # ═══════════════════════════════════════════════════════════════
-# BASE SYSTEM PROMPT — shared across all features
+# CONTRACT TYPE DETECTION
 # ═══════════════════════════════════════════════════════════════
 
-BASE_SYSTEM_PROMPT = """You are a senior legal contract analyst with expertise in corporate law, contract drafting, and regulatory compliance. You work for ClauseClear AI, a contract simplification platform.
+CONTRACT_TYPES = ["NDA", "EMPLOYMENT", "SAAS_TOS", "FREELANCE", "RENTAL", "LOAN", "PARTNERSHIP", "UNKNOWN"]
 
-=== INSTRUCTION HIERARCHY (strict priority order) ===
-PRIORITY 1 — SAFETY:
-- NEVER fabricate clauses, legal terms, or provisions not present in the provided text.
-- NEVER provide binding legal advice. Always clarify your output is for informational purposes.
-- If uncertain about a clause's meaning, explicitly flag it as "UNCERTAIN" with an explanation.
-- If the text doesn't appear to be a legal contract, say so clearly.
+CLASSIFY_ONLY_PROMPT = """You are a contract classifier. Read the contract text below and return ONLY a single JSON object:
+{"contract_type": "<TYPE>"}
+Where <TYPE> is exactly one of: NDA, EMPLOYMENT, SAAS_TOS, FREELANCE, RENTAL, LOAN, PARTNERSHIP, UNKNOWN
+No other output.
 
-PRIORITY 2 — USER CONSTRAINTS:
-- ONLY analyze the text provided in GROUNDING CONTEXT below.
-- Do NOT invent or assume clauses that are not present.
-- If the contract is incomplete, note which sections appear missing.
-
-PRIORITY 3 — OUTPUT FORMAT:
-- ALWAYS return valid JSON only. No markdown, no preamble, no explanation outside JSON.
-- Follow the exact JSON schema specified in the task instructions below.
-- Ensure all JSON strings are properly escaped.
-
-PRIORITY 4 — ENHANCEMENT:
-- Add actionable recommendations where possible.
-- Highlight areas that would benefit from professional legal review.
-- Suggest improvements to protect the user's interests.
-
-=== BEHAVIORAL GUIDELINES ===
-- Use plain, everyday English — avoid legal jargon unless quoting the original text.
-- Be thorough but concise — every sentence should add value.
-- When quoting original clause text, keep quotes brief (max 2 sentences).
-- Always maintain a professional, neutral, analytical tone.
+CONTRACT TEXT:
+{contract_text}
 """
 
 # ═══════════════════════════════════════════════════════════════
-# FEATURE 1: Clause-Level Summarization
+# BASE SYSTEM PROMPT (shared across all unified calls)
+# ═══════════════════════════════════════════════════════════════
+
+BASE_SYSTEM_PROMPT = """You are a senior legal contract analyst at ClauseClear AI. You provide structured, actionable analysis.
+
+ABSOLUTE RULES:
+1. Return ONLY valid JSON — no markdown, no preamble, no text outside the JSON object.
+2. NEVER fabricate clauses not present in the contract text.
+3. NEVER provide binding legal advice.
+4. If uncertain about a clause, flag it explicitly in the explanation.
+5. All risk explanations MUST reference the market benchmark standards provided.
+"""
+
+# ═══════════════════════════════════════════════════════════════
+# UNIFIED ANALYSIS PROMPT TEMPLATES (per contract type)
+# ═══════════════════════════════════════════════════════════════
+
+_UNIFIED_TEMPLATE = BASE_SYSTEM_PROMPT + """
+{benchmark_context}
+
+{historical_context}
+
+=== TASK: FULL CONTRACT ANALYSIS ===
+Analyze the contract below. Return this EXACT JSON schema (all fields required):
+
+{{
+  "contract_type": "{contract_type}",
+  "health_score": <integer 0-100>,
+  "health_grade": "<A|B|C|D|F>",
+  "health_verdict": "<one sentence plain English verdict>",
+  "risks": [
+    {{
+      "clause": "<clause name>",
+      "severity": "<HIGH|MEDIUM|LOW>",
+      "explanation": "<plain English explanation WITH explicit market benchmark comparison>",
+      "suggested_redline": "<one or two sentence proposed rewrite>"
+    }}
+  ],
+  "obligations": [
+    {{
+      "obligation": "<obligation description>",
+      "deadline_description": "<timing or deadline>",
+      "party": "<responsible party>",
+      "section": "<contract section reference>"
+    }}
+  ],
+  "summary": "<3-5 sentence plain language summary of the whole contract>",
+  "key_entities": {{
+    "parties": ["<party name>"],
+    "effective_date": "<date or empty string>",
+    "governing_law": "<jurisdiction or empty string>",
+    "termination_notice": "<notice period or empty string>"
+  }}
+}}
+
+Health score guide: 90-100=A (excellent), 80-89=B (good), 70-79=C (acceptable), 60-69=D (concerning), 0-59=F (dangerous).
+
+{memory_block}
+
+=== CONTRACT TEXT ===
+{contract_text}
+"""
+
+_NDA_ADDENDUM = """
+NDA FOCUS AREAS: Analyze mutual vs one-sided scope, IP assignment breadth, residuals clauses,
+duration against 2-3 year market standard, jurisdiction, and definition of "Confidential Information".
+"""
+
+_EMPLOYMENT_ADDENDUM = """
+EMPLOYMENT FOCUS AREAS: At-will provisions, non-compete duration+geography vs 6-12 month standard,
+equity vesting cliff+acceleration (standard: 4yr/1yr cliff), IP ownership of side projects,
+arbitration waivers, and severance terms.
+"""
+
+_SAAS_ADDENDUM = """
+SAAS_TOS FOCUS AREAS: Auto-renewal + cancellation notice windows (standard: 30-60 days),
+data ownership clauses, liability caps vs 12-month fees standard, SLA definitions,
+unilateral modification rights, and data retention on termination.
+"""
+
+_FREELANCE_ADDENDUM = """
+FREELANCE FOCUS AREAS: Payment terms + kill fees (standard: Net-30, 25-50% kill fee),
+IP transfer timing (should transfer only on full payment), revision limits,
+non-solicit clauses, and one-sided indemnification.
+"""
+
+_RENTAL_ADDENDUM = """
+RENTAL FOCUS AREAS: Security deposit vs 1-2 months standard, early termination penalties,
+maintenance responsibility allocation, subletting rights, notice periods (standard: 30 days),
+and rent increase mechanisms.
+"""
+
+_LOAN_ADDENDUM = """
+LOAN FOCUS AREAS: Interest rate vs market standard (6-12% APR for personal loans),
+prepayment penalties, default cure periods (standard: 10-30 days), collateral scope,
+and acceleration clauses.
+"""
+
+_PARTNERSHIP_ADDENDUM = """
+PARTNERSHIP FOCUS AREAS: Profit distribution fairness, deadlock resolution mechanisms,
+dissolution and exit provisions, post-dissolution non-compete scope,
+IP ownership assignment, and fiduciary duty language.
+"""
+
+_UNKNOWN_ADDENDUM = """
+GENERAL FOCUS: Apply balanced general legal analysis. Identify all liability, termination,
+payment, IP, and dispute resolution clauses. Flag any terms that deviate from typical
+commercial contract standards.
+"""
+
+PROMPT_TEMPLATES = {
+    "NDA": _NDA_ADDENDUM,
+    "EMPLOYMENT": _EMPLOYMENT_ADDENDUM,
+    "SAAS_TOS": _SAAS_ADDENDUM,
+    "FREELANCE": _FREELANCE_ADDENDUM,
+    "RENTAL": _RENTAL_ADDENDUM,
+    "LOAN": _LOAN_ADDENDUM,
+    "PARTNERSHIP": _PARTNERSHIP_ADDENDUM,
+    "UNKNOWN": _UNKNOWN_ADDENDUM,
+}
+
+# ═══════════════════════════════════════════════════════════════
+# SELF-CRITIQUE PROMPT (Phase 15)
+# ═══════════════════════════════════════════════════════════════
+
+SELF_CRITIQUE_PROMPT = """You are a senior legal QA reviewer at ClauseClear AI.
+
+Review the original contract text and the generated analysis JSON below.
+Check for:
+1. Any risks that were overstated or understated
+2. Any critical obligations that were missed
+3. Any health_score that seems too high or too low given the risks found
+4. Any suggested_redlines that are impractical
+
+Return the corrected, finalized JSON in the EXACT same schema as the input analysis.
+If the analysis is accurate, return it unchanged. Return ONLY the JSON object, no other text.
+
+=== ORIGINAL CONTRACT TEXT ===
+{contract_text}
+
+=== GENERATED ANALYSIS JSON TO REVIEW ===
+{analysis_json}
+"""
+
+# ═══════════════════════════════════════════════════════════════
+# LEGACY FEATURE PROMPTS (retained for specific feature calls)
 # ═══════════════════════════════════════════════════════════════
 
 CLAUSE_SUMMARIZATION_PROMPT = BASE_SYSTEM_PROMPT + """
@@ -71,264 +200,145 @@ Break the contract into individual clauses and generate a short plain-language s
   "clauses": [
     {
       "clause_number": <number>,
-      "title": "Short descriptive title for this clause",
-      "original_text_snippet": "First 1-2 sentences of the original clause text",
-      "plain_summary": "Clear plain-language summary of what this clause means",
+      "title": "Short descriptive title",
+      "original_text_snippet": "First 1-2 sentences of the original clause",
+      "plain_summary": "Clear plain-language summary",
       "key_points": ["Important point 1", "Important point 2"]
     }
   ],
-  "recommendations": ["Actionable recommendation 1", "Actionable recommendation 2"]
+  "recommendations": ["Actionable recommendation 1"]
 }
-
-Return ONLY the JSON object above. No other text.
 
 {memory_block}
 
-=== GROUNDING CONTEXT (CONTRACT TEXT) ===
+=== CONTRACT TEXT ===
 {contract_text}
 """
 
-# ═══════════════════════════════════════════════════════════════
-# FEATURE 2: Plain Language Translation
-# ═══════════════════════════════════════════════════════════════
-
 PLAIN_LANGUAGE_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: PLAIN LANGUAGE TRANSLATION ===
-Rewrite the entire contract in simple everyday English that a non-lawyer can understand, section by section.
+Rewrite the entire contract in simple everyday English, section by section.
 
 === REQUIRED JSON OUTPUT SCHEMA ===
 {
-  "quick_summary": "One-liner summary of the entire contract in plain English",
+  "quick_summary": "One-liner summary in plain English",
   "overall_complexity": "HIGH or MEDIUM or LOW",
   "sections": [
     {
       "section_number": <number>,
-      "original_heading": "Original section heading or inferred heading",
-      "original_text_snippet": "First 1-2 sentences of original text",
-      "plain_language": "Full plain-English rewrite of this section",
+      "original_heading": "Original heading",
+      "original_text_snippet": "First 1-2 sentences",
+      "plain_language": "Full plain-English rewrite",
       "complexity_rating": "HIGH or MEDIUM or LOW",
-      "why_it_matters": "Brief explanation of why this section is important to the user"
+      "why_it_matters": "Why this section is important"
     }
   ],
   "jargon_glossary": [
-    {
-      "term": "Legal term found in the contract",
-      "plain_meaning": "What this term means in everyday English"
-    }
+    {"term": "Legal term", "plain_meaning": "Plain meaning"}
   ],
-  "recommendations": ["Actionable recommendation 1", "Actionable recommendation 2"]
+  "recommendations": ["Recommendation 1"]
 }
-
-Return ONLY the JSON object above. No other text.
 
 {memory_block}
 
-=== GROUNDING CONTEXT (CONTRACT TEXT) ===
+=== CONTRACT TEXT ===
 {contract_text}
 """
-
-# ═══════════════════════════════════════════════════════════════
-# FEATURE 3: Risk Highlight Generation
-# ═══════════════════════════════════════════════════════════════
-
-RISK_HIGHLIGHT_PROMPT = BASE_SYSTEM_PROMPT + """
-=== TASK: RISK HIGHLIGHT GENERATION ===
-Detect risky or potentially unfair clauses in the contract. Look specifically for:
-- Auto-renewal clauses
-- Liability caps or limitations
-- Indemnification traps
-- IP assignment or transfer
-- Penalty clauses
-- Data rights or privacy concerns
-- Non-compete restrictions
-- Unilateral termination rights
-- Broad force majeure clauses
-- Governing law in unfavorable jurisdictions
-
-Rate each risk as HIGH / MEDIUM / LOW and provide negotiation recommendations.
-
-=== REQUIRED JSON OUTPUT SCHEMA ===
-{
-  "quick_summary": "One-liner overview of the contract's risk profile",
-  "overall_risk_level": "HIGH or MEDIUM or LOW",
-  "total_risks": <number>,
-  "risk_breakdown": {"HIGH": <n>, "MEDIUM": <n>, "LOW": <n>},
-  "risks": [
-    {
-      "risk_number": <number>,
-      "clause_text_snippet": "Brief quote of the risky clause",
-      "risk_type": "e.g. Auto-Renewal, Liability Cap, IP Assignment",
-      "severity": "HIGH or MEDIUM or LOW",
-      "explanation": "Plain-English explanation of why this is risky",
-      "potential_impact": "What could happen if this clause is enforced",
-      "negotiation_tip": "Specific suggestion for how to negotiate or modify this clause"
-    }
-  ],
-  "safe_clauses_note": "Brief note about clauses that appear standard and fair",
-  "recommendations": ["Overall recommendation 1", "Overall recommendation 2"]
-}
-
-Return ONLY the JSON object above. No other text.
-
-{memory_block}
-
-=== GROUNDING CONTEXT (CONTRACT TEXT) ===
-{contract_text}
-"""
-
-# ═══════════════════════════════════════════════════════════════
-# FEATURE 4: Structured Clause Tagging
-# ═══════════════════════════════════════════════════════════════
 
 CLAUSE_TAGGING_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: STRUCTURED CLAUSE TAGGING ===
-Tag every clause in the contract with a category label from this taxonomy:
-Payment, Termination, Liability, Confidentiality, Governing Law, Dispute Resolution,
-Warranties, Non-Compete, Data Privacy, IP Rights, Force Majeure, Indemnification,
-Representations, Amendments, Assignment, Notices, Severability, Entire Agreement, Other.
+Tag every clause with a category from: Payment, Termination, Liability, Confidentiality,
+Governing Law, Dispute Resolution, Warranties, Non-Compete, Data Privacy, IP Rights,
+Force Majeure, Indemnification, Representations, Amendments, Assignment, Notices,
+Severability, Entire Agreement, Other.
 
 === REQUIRED JSON OUTPUT SCHEMA ===
 {
-  "quick_summary": "One-liner overview of the contract's structure and composition",
+  "quick_summary": "One-liner overview of the contract structure",
   "total_clauses": <number>,
-  "category_frequency": {
-    "Payment": <n>,
-    "Termination": <n>,
-    "Liability": <n>,
-    ...
-  },
+  "category_frequency": {"Payment": <n>, "Termination": <n>},
   "tagged_clauses": [
     {
       "clause_number": <number>,
-      "text_snippet": "First 1-2 sentences of the clause",
-      "primary_category": "Main category from the taxonomy above",
-      "secondary_tags": ["Additional relevant tag 1", "Additional relevant tag 2"],
+      "text_snippet": "First 1-2 sentences",
+      "primary_category": "Main category",
+      "secondary_tags": ["Tag 1"],
       "confidence": "HIGH or MEDIUM or LOW",
-      "brief_note": "One-sentence note about what this clause does"
+      "brief_note": "One-sentence note"
     }
   ],
-  "missing_categories": ["Categories NOT found in this contract that are commonly expected"],
-  "recommendations": ["Recommendation 1", "Recommendation 2"]
+  "missing_categories": ["Categories not found but commonly expected"],
+  "recommendations": ["Recommendation 1"]
 }
-
-Return ONLY the JSON object above. No other text.
 
 {memory_block}
 
-=== GROUNDING CONTEXT (CONTRACT TEXT) ===
+=== CONTRACT TEXT ===
 {contract_text}
 """
-
-# ═══════════════════════════════════════════════════════════════
-# FEATURE 5: Key Entity Extraction (NER)
-# ═══════════════════════════════════════════════════════════════
 
 ENTITY_EXTRACTION_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: KEY ENTITY EXTRACTION ===
-Extract all critical metadata and named entities from the contract into a structured table.
-Focus on: party names, effective/expiration dates, payment terms, governing law/jurisdiction,
-key obligations for each party, notice periods, and any defined monetary amounts.
+Extract all critical metadata and named entities from the contract.
 
 === REQUIRED JSON OUTPUT SCHEMA ===
 {
-  "quick_summary": "One-liner describing what kind of contract this is and who the parties are",
-  "parties": [
-    {
-      "role": "e.g. Buyer, Seller, Licensor, Licensee, Employer, Employee",
-      "name": "Legal name as written in the contract",
-      "key_obligations": ["Main obligation 1", "Main obligation 2"]
-    }
-  ],
-  "important_dates": [
-    {
-      "label": "e.g. Effective Date, Expiration Date, Renewal Deadline",
-      "value": "Date or period as written in the contract",
-      "note": "Brief plain-English note about the significance of this date"
-    }
-  ],
-  "payment_terms": {
-    "amount": "Total amount or rate, or N/A",
-    "currency": "Currency code or N/A",
-    "schedule": "Payment schedule plain description (e.g. monthly, on delivery)",
-    "late_penalty": "Penalty clause for late payment, or N/A"
-  },
-  "governing_law": {
-    "jurisdiction": "State/Country",
-    "court_or_arbitration": "Specified forum for disputes",
-    "risk_note": "Brief note on whether this jurisdiction is favorable or concerning"
-  },
-  "notice_period": "e.g. 30 days written notice, or N/A",
-  "defined_terms": [
-    {
-      "term": "Defined term as used in the contract",
-      "definition": "Its definition from the contract"
-    }
-  ],
-  "missing_entities": ["Critical fields that could not be found in the contract"],
-  "recommendations": ["Recommendation 1", "Recommendation 2"]
+  "quick_summary": "One-liner describing contract type and parties",
+  "parties": [{"role": "Buyer/Seller/etc", "name": "Legal name", "key_obligations": ["Obligation 1"]}],
+  "important_dates": [{"label": "Effective Date", "value": "Date", "note": "Significance"}],
+  "payment_terms": {"amount": "Amount or N/A", "currency": "USD or N/A", "schedule": "Monthly/etc", "late_penalty": "Penalty or N/A"},
+  "governing_law": {"jurisdiction": "State/Country", "court_or_arbitration": "Forum", "risk_note": "Note"},
+  "notice_period": "30 days or N/A",
+  "defined_terms": [{"term": "Term", "definition": "Definition"}],
+  "missing_entities": ["Fields not found"],
+  "recommendations": ["Recommendation 1"]
 }
-
-Return ONLY the JSON object above. No other text.
 
 {memory_block}
 
-=== GROUNDING CONTEXT (CONTRACT TEXT) ===
+=== CONTRACT TEXT ===
 {contract_text}
 """
 
-# ═══════════════════════════════════════════════════════════════
-# FEATURE 6: Contract Comparison / Semantic Redlining
-# ═══════════════════════════════════════════════════════════════
-
 CONTRACT_COMPARE_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: CONTRACT COMPARISON & SEMANTIC REDLINING ===
-The user has provided TWO versions of a contract: the ORIGINAL (Version A) and a REVISED version (Version B).
-Identify every meaningful difference — not just textual changes, but their LEGAL and PRACTICAL impact.
-Do NOT simply list word changes; explain what each change means for each party.
+Compare Version A (original) and Version B (revised). Identify every meaningful change and its legal impact.
 
 === REQUIRED JSON OUTPUT SCHEMA ===
 {
-  "quick_summary": "One-liner overview of how the revision changed the contract's overall balance",
+  "quick_summary": "One-liner on how the revision changed the overall balance",
   "overall_verdict": "FAVORABLE_TO_A or FAVORABLE_TO_B or NEUTRAL or MIXED",
   "total_changes": <number>,
   "changes": [
     {
       "change_number": <number>,
-      "clause_or_section": "Which clause/section was changed",
+      "clause_or_section": "Which clause changed",
       "original_text_snippet": "Brief quote from Version A",
       "revised_text_snippet": "Brief quote from Version B",
       "change_type": "ADDITION or DELETION or MODIFICATION or REORDERING",
       "impact_severity": "HIGH or MEDIUM or LOW",
-      "plain_explanation": "Plain-English explanation of what changed and why it matters",
+      "plain_explanation": "What changed and why it matters",
       "who_benefits": "Party A, Party B, or Both/Neutral",
-      "negotiation_note": "Suggested counter-position or acceptance rationale"
+      "negotiation_note": "Counter-position or acceptance rationale"
     }
   ],
-  "unchanged_key_clauses": ["Important clauses that were NOT changed"],
-  "executive_recommendation": "Overall recommendation — should the revised version be accepted, rejected, or negotiated?",
-  "recommendations": ["Specific recommendation 1", "Specific recommendation 2"]
+  "unchanged_key_clauses": ["Important unchanged clauses"],
+  "executive_recommendation": "Overall recommendation",
+  "recommendations": ["Specific recommendation 1"]
 }
-
-Return ONLY the JSON object above. No other text.
 
 {memory_block}
 
-=== GROUNDING CONTEXT — VERSION A (ORIGINAL CONTRACT) ===
+=== CONTRACT TEXT — VERSION A (ORIGINAL) ===
 {contract_text}
 
-=== GROUNDING CONTEXT — VERSION B (REVISED CONTRACT) ===
+=== CONTRACT TEXT — VERSION B (REVISED) ===
 {extra_context}
 """
 
-# ═══════════════════════════════════════════════════════════════
-# FEATURE 7: Multilingual Translation
-# ═══════════════════════════════════════════════════════════════
-
 MULTILINGUAL_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: MULTILINGUAL PLAIN-LANGUAGE TRANSLATION ===
-Translate the contract into the TARGET LANGUAGE specified below, using plain everyday language
-that a non-lawyer speaker of that language can easily understand.
-Preserve the meaning and legal intent faithfully — do NOT simplify away important obligations.
+Translate the contract into the TARGET LANGUAGE below in plain everyday language.
 
 === TARGET LANGUAGE ===
 {extra_context}
@@ -336,72 +346,54 @@ Preserve the meaning and legal intent faithfully — do NOT simplify away import
 === REQUIRED JSON OUTPUT SCHEMA ===
 {
   "target_language": "{extra_context}",
-  "quick_summary": "One-sentence overview of the contract in the target language",
+  "quick_summary": "One-sentence overview in the target language",
   "sections": [
     {
       "section_number": <number>,
-      "original_heading": "Original section heading (in source language)",
-      "translated_heading": "Section heading in target language",
-      "translated_text": "Full plain-language translation of this section in the target language",
-      "key_obligation": "The single most important obligation from this section"
+      "original_heading": "Original heading",
+      "translated_heading": "Heading in target language",
+      "translated_text": "Full plain-language translation",
+      "key_obligation": "Most important obligation from this section"
     }
   ],
   "critical_terms_glossary": [
-    {
-      "original_term": "Legal term in original language",
-      "translated_term": "Term in target language",
-      "plain_explanation": "What this term means in plain terms"
-    }
+    {"original_term": "Legal term", "translated_term": "Term in target language", "plain_explanation": "Meaning"}
   ],
-  "translation_notes": ["Any note about terms that have no direct equivalent in the target language"],
+  "translation_notes": ["Notes about terms without direct equivalents"],
   "recommendations": ["Recommendation 1"]
 }
 
-Return ONLY the JSON object above. No other text.
-
 {memory_block}
 
-=== GROUNDING CONTEXT (CONTRACT TEXT) ===
+=== CONTRACT TEXT ===
 {contract_text}
 """
 
-# ═══════════════════════════════════════════════════════════════
-# FOLLOW-UP CHAT PROMPT
-# ═══════════════════════════════════════════════════════════════
-
 CHAT_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: FOLLOW-UP CONVERSATION ===
-The user has already analyzed a contract and is now asking follow-up questions about it.
-Answer their question using the contract text and conversation history as context.
+Answer the user's question about the contract using contract text and conversation history.
 
 === REQUIRED JSON OUTPUT SCHEMA ===
 {
-  "answer": "Your detailed, plain-English answer to the user's question",
-  "relevant_clauses": ["Brief reference to relevant clauses if applicable"],
+  "answer": "Detailed plain-English answer",
+  "relevant_clauses": ["Brief clause reference"],
   "confidence": "HIGH or MEDIUM or LOW",
-  "follow_up_suggestions": ["Suggested follow-up question 1", "Suggested follow-up question 2"]
+  "follow_up_suggestions": ["Suggested follow-up 1", "Suggested follow-up 2"]
 }
-
-Return ONLY the JSON object above. No other text.
 
 === CONVERSATION MEMORY (last {turn_count} turns) ===
 {memory_block}
 
-=== GROUNDING CONTEXT (CONTRACT TEXT) ===
+=== CONTRACT TEXT ===
 {contract_text}
 
-=== USER'S CURRENT QUESTION ===
+=== USER QUESTION ===
 {user_question}
 """
-
-# ═══════════════════════════════════════════════════════════════
-# PROMPT REGISTRY
-# ═══════════════════════════════════════════════════════════════
 
 FEATURE_PROMPTS = {
     "summarize": CLAUSE_SUMMARIZATION_PROMPT,
     "translate": PLAIN_LANGUAGE_PROMPT,
-    "risks": RISK_HIGHLIGHT_PROMPT,
     "tags": CLAUSE_TAGGING_PROMPT,
     "entities": ENTITY_EXTRACTION_PROMPT,
     "compare": CONTRACT_COMPARE_PROMPT,
@@ -409,6 +401,7 @@ FEATURE_PROMPTS = {
 }
 
 FEATURE_LABELS = {
+    "unified": "Full Contract Analysis",
     "summarize": "Clause-Level Summarization",
     "translate": "Plain Language Translation",
     "risks": "Risk Highlight Generation",
@@ -418,37 +411,24 @@ FEATURE_LABELS = {
     "multilingual": "Multilingual Translation",
 }
 
-
 # ═══════════════════════════════════════════════════════════════
-# HELPER FUNCTIONS
+# HELPERS
 # ═══════════════════════════════════════════════════════════════
 
 def _build_memory_block(memory_turns):
-    """Format conversation memory for injection into prompts."""
     if not memory_turns:
         return ""
-
-    lines = ["=== CONVERSATION MEMORY (previous context) ==="]
+    lines = ["=== CONVERSATION MEMORY ==="]
     for i, turn in enumerate(memory_turns, 1):
-        role_label = "USER" if turn["role"] == "user" else "ASSISTANT"
-        content_preview = turn["content"][:500]
-        lines.append(f"Turn {i} [{role_label}]: {content_preview}")
-
+        label = "USER" if turn["role"] == "user" else "ASSISTANT"
+        lines.append(f"Turn {i} [{label}]: {turn['content'][:500]}")
     return "\n".join(lines)
 
 
-def _call_gemini(prompt_text):
-    """
-    Call Gemini API with retry logic for 503 errors.
-
-    Args:
-        prompt_text: The fully assembled prompt string.
-
-    Returns:
-        Parsed JSON dict, or error dict.
-    """
-    if not Config.GEMINI_API_KEY or Config.GEMINI_API_KEY == "your_gemini_api_key_here":
-        return {"error": "Gemini API key is not configured. Please add your key to the .env file."}
+def _call_gemini(prompt_text: str, temperature: float = 0.3) -> dict:
+    """Call Gemini API with retry logic. Returns parsed JSON dict or error dict."""
+    if not Config.GEMINI_API_KEY:
+        return {"error": "Gemini API key is not configured. Please add GEMINI_API_KEY to your .env file."}
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -456,106 +436,229 @@ def _call_gemini(prompt_text):
                 model=Config.GEMINI_MODEL,
                 contents=prompt_text,
                 config=genai.types.GenerateContentConfig(
-                    temperature=0.3,
+                    temperature=temperature,
                     max_output_tokens=8192,
                 ),
             )
 
-            raw_text = response.text.strip()
+            raw = response.text.strip()
 
-            # Strip markdown code fences if the model wraps JSON in them
-            if raw_text.startswith("```"):
-                first_newline = raw_text.index("\n")
-                last_fence = raw_text.rfind("```")
-                raw_text = raw_text[first_newline + 1:last_fence].strip()
+            # Strip markdown code fences if present
+            if raw.startswith("```"):
+                first_nl = raw.index("\n")
+                last_fence = raw.rfind("```")
+                raw = raw[first_nl + 1:last_fence].strip()
 
-            return json.loads(raw_text)
+            return json.loads(raw)
 
         except json.JSONDecodeError:
-            # If JSON parsing fails, return the raw text in an error wrapper
-            return {
-                "error": "Model returned invalid JSON. Showing raw output.",
-                "raw_response": raw_text[:3000]
-            }
-        except Exception as e:
-            error_msg = str(e)
-            if "503" in error_msg or "UNAVAILABLE" in error_msg:
+            logger.error("Gemini returned invalid JSON (attempt %d)", attempt + 1)
+            return {"error": "The AI returned an unexpected format. Please try again."}
+        except Exception as exc:
+            err = str(exc)
+            if "503" in err or "UNAVAILABLE" in err:
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                     continue
-                return {
-                    "error": "The Gemini model is experiencing high demand. Please try again in a few seconds."
-                }
-            return {"error": f"API error: {error_msg}"}
+                return {"error": "The AI service is temporarily busy. Please try again in a moment."}
+            logger.error("Gemini API error: %s", err, exc_info=True)
+            return {"error": "An error occurred while processing your request. Please try again."}
 
     return {"error": "Failed after maximum retries."}
 
 
 # ═══════════════════════════════════════════════════════════════
-# PUBLIC API FUNCTIONS
+# EMBEDDING & RAG (Phase 16)
+# ═══════════════════════════════════════════════════════════════
+
+def generate_embedding(text: str) -> list:
+    """
+    Generate a vector embedding for the given text using text-embedding-004.
+    Returns a list of floats, or empty list on failure.
+    """
+    try:
+        response = client.models.embed_content(
+            model="text-embedding-004",
+            contents=text[:8000],
+        )
+        embedding = response.embeddings[0].values
+        return list(embedding)
+    except Exception as exc:
+        logger.error("Embedding generation failed: %s", exc)
+        return []
+
+
+def cosine_similarity(a: list, b: list) -> float:
+    """Compute cosine similarity between two vectors using pure Python math."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    mag_a = math.sqrt(sum(x * x for x in a))
+    mag_b = math.sqrt(sum(x * x for x in b))
+    if mag_a == 0 or mag_b == 0:
+        return 0.0
+    return dot / (mag_a * mag_b)
+
+
+def find_similar_analysis(new_embedding: list, past_embeddings: list) -> dict:
+    """
+    Find the most similar past analysis using cosine similarity.
+    Returns the best match dict or None.
+    """
+    if not new_embedding or not past_embeddings:
+        return None
+
+    best_score = 0.0
+    best_match = None
+    for entry in past_embeddings:
+        score = cosine_similarity(new_embedding, entry["embedding"])
+        if score > best_score:
+            best_score = score
+            best_match = entry
+
+    if best_match and best_score > 0.75:  # threshold for meaningful similarity
+        return best_match
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# UNIFIED ANALYSIS (Phase 2 + 3 + 15 + 16)
+# ═══════════════════════════════════════════════════════════════
+
+def classify_contract(contract_text: str) -> str:
+    """Quick single-sentence classification call. Returns contract type string."""
+    prompt = CLASSIFY_ONLY_PROMPT.replace("{contract_text}", contract_text[:5000])
+    result = _call_gemini(prompt, temperature=0.1)
+    ct = result.get("contract_type", "UNKNOWN").upper()
+    return ct if ct in CONTRACT_TYPES else "UNKNOWN"
+
+
+def unified_analyze(
+    contract_text: str,
+    memory_turns: list = None,
+    past_embeddings: list = None,
+    session_id: str = "",
+    filename: str = "",
+) -> dict:
+    """
+    Single unified Gemini call: classify + analyze + obligations + health score.
+    Implements self-critique loop and historical RAG context injection.
+
+    Returns the full analysis JSON dict.
+    """
+    start_time = time.time()
+
+    if not contract_text or not contract_text.strip():
+        return {"error": "No contract text provided."}
+
+    # Step 1: Classify contract type
+    logger.info("Classifying contract for session=%s file=%s", session_id, filename)
+    contract_type = classify_contract(contract_text)
+    logger.info("Contract classified as: %s", contract_type)
+
+    # Step 2: Build RAG historical context
+    historical_context = ""
+    rag_embedding = []
+    if past_embeddings:
+        rag_embedding = generate_embedding(contract_text[:8000])
+        similar = find_similar_analysis(rag_embedding, past_embeddings)
+        if similar:
+            historical_context = (
+                f"=== HISTORICAL CONTEXT ===\n"
+                f"We have analyzed a similar {similar['contract_type']} contract before "
+                f"(file: {similar['filename']}) which received a health score of {similar['health_score']}/100. "
+                f"Compare this contract against that precedent."
+            )
+            logger.info("RAG context injected from analysis_id=%s", similar["analysis_id"])
+
+    # Step 3: Build the full analysis prompt
+    benchmark_context = format_benchmark_for_prompt(contract_type)
+    type_addendum = PROMPT_TEMPLATES.get(contract_type, PROMPT_TEMPLATES["UNKNOWN"])
+    memory_block = _build_memory_block(memory_turns or [])
+
+    prompt = _UNIFIED_TEMPLATE.format(
+        benchmark_context=benchmark_context + "\n" + type_addendum,
+        historical_context=historical_context,
+        contract_type=contract_type,
+        memory_block=memory_block,
+        contract_text=contract_text[:15000],
+    )
+
+    # Step 4: Primary analysis call
+    logger.info("Running primary analysis call for session=%s", session_id)
+    analysis = _call_gemini(prompt, temperature=0.3)
+
+    if "error" in analysis:
+        return analysis
+
+    # Step 5: Self-critique loop (Phase 15)
+    logger.info("Running self-critique call for session=%s", session_id)
+    critique_prompt = SELF_CRITIQUE_PROMPT.format(
+        contract_text=contract_text[:8000],
+        analysis_json=json.dumps(analysis, indent=2)[:6000],
+    )
+    critiqued = _call_gemini(critique_prompt, temperature=0.2)
+
+    if "error" not in critiqued and isinstance(critiqued, dict) and "health_score" in critiqued:
+        analysis = critiqued
+        logger.info("Self-critique applied successfully")
+    else:
+        logger.warning("Self-critique returned unusable result, keeping original analysis")
+
+    # Step 6: Generate embedding for this contract's high-severity risks
+    high_risks = [r for r in analysis.get("risks", []) if r.get("severity") == "HIGH"]
+    embedding_text = " ".join(r.get("explanation", "") for r in high_risks)
+    if embedding_text.strip():
+        rag_embedding = generate_embedding(embedding_text)
+
+    duration_ms = int((time.time() - start_time) * 1000)
+    logger.info(
+        "Analysis complete | session=%s | file=%s | type=%s | score=%s | duration=%dms",
+        session_id, filename, contract_type,
+        analysis.get("health_score", "?"), duration_ms,
+    )
+
+    # Attach metadata for the caller
+    analysis["_contract_type"] = contract_type
+    analysis["_embedding"] = rag_embedding
+    analysis["_duration_ms"] = duration_ms
+
+    return analysis
+
+
+# ═══════════════════════════════════════════════════════════════
+# LEGACY FEATURE ANALYZE (retained for summarize/translate/etc)
 # ═══════════════════════════════════════════════════════════════
 
 def analyze_contract(feature, contract_text, memory_turns=None, extra_context=""):
-    """
-    Run one of the analysis features on a contract.
-
-    Args:
-        feature: One of 'summarize', 'translate', 'risks', 'tags',
-                 'entities', 'compare', 'multilingual'.
-        contract_text: The full contract text to analyze (Version A for compare).
-        memory_turns: List of previous conversation turns for context.
-        extra_context: Secondary data required by some features:
-                       - 'compare'      → Version B contract text
-                       - 'multilingual' → Target language string (e.g. "Spanish")
-
-    Returns:
-        Parsed JSON response dict from Gemini.
-    """
+    """Run a legacy feature-specific analysis."""
     if feature not in FEATURE_PROMPTS:
         return {"error": f"Unknown feature: {feature}"}
-
     if not contract_text or not contract_text.strip():
-        return {"error": "No contract text provided. Please paste text or upload a file."}
-
-    # Validate extra_context for features that require it
+        return {"error": "No contract text provided."}
     if feature == "compare" and not (extra_context or "").strip():
         return {"error": "Contract Comparison requires a second (revised) contract text."}
     if feature == "multilingual" and not (extra_context or "").strip():
         return {"error": "Multilingual Translation requires a target language (e.g. 'Spanish')."}
 
-    prompt_template = FEATURE_PROMPTS[feature]
+    template = FEATURE_PROMPTS[feature]
     memory_block = _build_memory_block(memory_turns or [])
-
-    prompt = (prompt_template
-               .replace("{memory_block}", memory_block)
-               .replace("{contract_text}", contract_text[:15000])
-               .replace("{extra_context}", (extra_context or "")[:8000]))
-
+    prompt = (template
+              .replace("{memory_block}", memory_block)
+              .replace("{contract_text}", contract_text[:15000])
+              .replace("{extra_context}", (extra_context or "")[:8000]))
     return _call_gemini(prompt)
 
 
 def chat_followup(user_question, contract_text, memory_turns=None):
-    """
-    Handle a follow-up chat question about a previously analyzed contract.
-
-    Args:
-        user_question: The user's follow-up question.
-        contract_text: The contract text for grounding.
-        memory_turns: Last N conversation turns for memory.
-
-    Returns:
-        Parsed JSON response dict from Gemini.
-    """
+    """Handle a follow-up chat question."""
     if not user_question or not user_question.strip():
         return {"error": "No question provided."}
-
     turns = memory_turns or []
     memory_block = _build_memory_block(turns)
-
     prompt = (CHAT_PROMPT
-               .replace("{turn_count}", str(len(turns)))
-               .replace("{memory_block}", memory_block)
-               .replace("{contract_text}", (contract_text or "No contract uploaded yet.")[:15000])
-               .replace("{user_question}", user_question))
-
+              .replace("{turn_count}", str(len(turns)))
+              .replace("{memory_block}", memory_block)
+              .replace("{contract_text}", (contract_text or "No contract uploaded yet.")[:15000])
+              .replace("{user_question}", user_question))
     return _call_gemini(prompt)

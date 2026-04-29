@@ -1,710 +1,495 @@
 /**
- * ClauseClear AI — Frontend JavaScript
- * Handles file upload, 4 analysis modes, result rendering, and follow-up chat.
+ * ClauseClear AI — Main Application JS
+ * Handles: upload, unified analysis, risk cards, health gauge,
+ * obligations table, loading stages, chat, toast, theme, CSRF.
  */
 
-// ─────────────────────────────────────────────
-// Navigation
-// ─────────────────────────────────────────────
+'use strict';
 
-document.addEventListener('DOMContentLoaded', () => {
-    // ── Theme toggle ──────────────────────────────────────
-    const themeBtn = document.getElementById('theme-toggle-btn');
-    const THEME_KEY = 'clauseclear-theme';
-
-    // Apply saved theme immediately (prevents flash)
-    const savedTheme = localStorage.getItem(THEME_KEY) || 'dark';
-    applyTheme(savedTheme);
-
-    if (themeBtn) {
-        themeBtn.addEventListener('click', () => {
-            const current = document.body.getAttribute('data-theme') || 'dark';
-            const next = current === 'dark' ? 'light' : 'dark';
-            applyTheme(next);
-            localStorage.setItem(THEME_KEY, next);
-        });
-    }
-
-    function applyTheme(theme) {
-        document.body.setAttribute('data-theme', theme);
-        if (themeBtn) themeBtn.textContent = theme === 'dark' ? '☀️' : '🌙';
-    }
-
-    // ── Nav mobile toggle ─────────────────────────────────
-    const navToggle = document.getElementById('nav-toggle');
-    const navLinks = document.getElementById('nav-links');
-    if (navToggle && navLinks) {
-        navToggle.addEventListener('click', () => navLinks.classList.toggle('open'));
-    }
-});
-
-// ─────────────────────────────────────────────
-// Analyze Page Init
-// ─────────────────────────────────────────────
-
-function initAnalyzePage() {
-    const uploadZone = document.getElementById('upload-zone');
-    const fileInput = document.getElementById('file-input');
-    const featureBtns = document.querySelectorAll('.feature-btn');
-    const clearMemBtn = document.getElementById('clear-memory-btn');
-    const chatForm = document.getElementById('chat-form');
-    const chatInput = document.getElementById('chat-input');
-
-    if (!uploadZone) return;
-
-    // File upload — click
-    uploadZone.addEventListener('click', () => fileInput.click());
-
-    // File upload — drag & drop
-    uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
-    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
-    uploadZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        uploadZone.classList.remove('dragover');
-        if (e.dataTransfer.files.length > 0) uploadFile(e.dataTransfer.files[0]);
-    });
-    fileInput.addEventListener('change', () => {
-        if (fileInput.files.length > 0) uploadFile(fileInput.files[0]);
-    });
-
-    // Feature buttons
-    featureBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            featureBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            runAnalysis(btn.dataset.feature);
-        });
-    });
-
-    // Clear memory
-    if (clearMemBtn) {
-        clearMemBtn.addEventListener('click', clearMemory);
-    }
-
-    // Chat form
-    if (chatForm) {
-        chatForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const msg = chatInput.value.trim();
-            if (msg) { sendChat(msg); chatInput.value = ''; }
-        });
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                chatForm.dispatchEvent(new Event('submit'));
-            }
-        });
-        chatInput.addEventListener('input', () => {
-            chatInput.style.height = 'auto';
-            chatInput.style.height = Math.min(chatInput.scrollHeight, 100) + 'px';
-        });
-    }
-
-    // Load memory count
-    updateMemoryCount();
+// ─── CSRF ──────────────────────────────────────────────────────────────────
+function getCsrf() {
+    return document.querySelector('meta[name="csrf-token"]')?.content || '';
 }
 
-// ─────────────────────────────────────────────
-// File Upload
-// ─────────────────────────────────────────────
-
-function uploadFile(file) {
-    const uploadContent = document.getElementById('upload-content');
-    const uploadStatus = document.getElementById('upload-status');
-    const uploadFilename = document.getElementById('upload-filename');
-    const uploadChars = document.getElementById('upload-chars');
-
-    uploadContent.innerHTML = `
-        <div class="upload-icon" style="animation: pulse 1s infinite;">⏳</div>
-        <p class="upload-text">Processing ${esc(file.name)}...</p>
-    `;
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    fetch('/api/upload', { method: 'POST', body: formData })
-        .then(r => r.json())
-        .then(data => {
-            resetUploadZone();
-            if (data.error) {
-                alert(data.error);
-            } else {
-                uploadStatus.style.display = 'block';
-                uploadFilename.textContent = data.filename;
-                uploadChars.textContent = `${data.char_count.toLocaleString()} chars`;
-            }
-        })
-        .catch(err => {
-            resetUploadZone();
-            alert('Upload failed: ' + err.message);
-        });
+function apiFetch(url, opts = {}) {
+    opts.headers = Object.assign({ 'X-CSRFToken': getCsrf(), 'Content-Type': 'application/json' }, opts.headers || {});
+    return fetch(url, opts);
 }
 
-function resetUploadZone() {
-    const uploadContent = document.getElementById('upload-content');
-    uploadContent.innerHTML = `
-        <div class="upload-icon">📁</div>
-        <p class="upload-text">Drag & drop or click to upload</p>
-        <p class="upload-hint">PDF or TXT • Max 16MB</p>
-    `;
+// ─── TOAST ─────────────────────────────────────────────────────────────────
+function showToast(msg, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${type}`;
+    toast.textContent = msg;
+    container.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('toast--visible'));
+    setTimeout(() => {
+        toast.classList.remove('toast--visible');
+        setTimeout(() => toast.remove(), 400);
+    }, 4000);
 }
 
-// ─────────────────────────────────────────────
-// Run Analysis
-// ─────────────────────────────────────────────
-
-function runAnalysis(feature) {
-    const contractText = document.getElementById('contract-text').value.trim();
-    let extra_context = "";
-    if (feature === "compare") {
-        extra_context = prompt("Please paste the secondary contract text for comparison:");
-        if (!extra_context) {
-            document.querySelectorAll('.feature-btn').forEach(b => b.classList.remove('active'));
-            return;
-        }
-    } else if (feature === "multilingual") {
-        extra_context = prompt("What language do you want to translate to? (e.g., English, Spanish, French)", "English");
-        if (!extra_context) {
-            document.querySelectorAll('.feature-btn').forEach(b => b.classList.remove('active'));
-            return;
-        }
-    }
-
-    const resultsLoading = document.getElementById('results-loading');
-    const resultsEmpty = document.getElementById('results-empty');
-    const resultsContent = document.getElementById('results-content');
-    const resultsError = document.getElementById('results-error');
-    const resultsTitle = document.getElementById('results-title');
-    const resultsBadge = document.getElementById('results-badge');
-    const chatSection = document.getElementById('chat-section');
-
-    // Show loading
-    resultsLoading.style.display = 'flex';
-    resultsEmpty.style.display = 'none';
-    resultsContent.style.display = 'none';
-    resultsError.style.display = 'none';
-    chatSection.style.display = 'none';
-
-    // Disable buttons
-    document.querySelectorAll('.feature-btn').forEach(b => b.disabled = true);
-
-    fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feature, contract_text: contractText, extra_context }),
-    })
-    .then(r => r.json())
-    .then(data => {
-        resultsLoading.style.display = 'none';
-        document.querySelectorAll('.feature-btn').forEach(b => b.disabled = false);
-
-        if (data.result && data.result.error) {
-            showError(data.result.error);
-            return;
-        }
-
-        // Update header
-        resultsTitle.textContent = `📊 ${data.feature_label}`;
-        resultsBadge.textContent = data.feature;
-        resultsBadge.style.display = 'inline-block';
-
-        // Render results
-        resultsContent.innerHTML = renderResults(data.feature, data.result);
-        resultsContent.style.display = 'block';
-
-        // Show chat section
-        chatSection.style.display = 'block';
-
-        // Update memory count
-        updateMemoryCount();
-    })
-    .catch(err => {
-        resultsLoading.style.display = 'none';
-        document.querySelectorAll('.feature-btn').forEach(b => b.disabled = false);
-        showError('Network error: ' + err.message);
+// ─── THEME ─────────────────────────────────────────────────────────────────
+function initTheme() {
+    const btn = document.getElementById('theme-toggle-btn');
+    if (!btn) return;
+    const applyTheme = (t) => {
+        document.documentElement.setAttribute('data-theme', t);
+        localStorage.setItem('theme', t);
+        btn.textContent = t === 'dark' ? '☀️' : '🌙';
+    };
+    const current = localStorage.getItem('theme') || 'dark';
+    applyTheme(current);
+    btn.addEventListener('click', () => {
+        applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
     });
+}
+
+// ─── LOADING STAGES ────────────────────────────────────────────────────────
+const LOAD_STAGES = [
+    'Extracting document text…',
+    'Classifying contract type…',
+    'Analyzing clauses against market benchmarks…',
+    'Identifying obligations and deadlines…',
+    'Calculating health score…',
+    'Finalizing report…',
+];
+
+let _stageInterval = null;
+
+function startLoading() {
+    const loadEl = document.getElementById('results-loading');
+    const emptyEl = document.getElementById('results-empty');
+    const contentEl = document.getElementById('results-content');
+    const errEl = document.getElementById('results-error');
+    if (loadEl) loadEl.style.display = 'flex';
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (contentEl) contentEl.style.display = 'none';
+    if (errEl) errEl.style.display = 'none';
+
+    let idx = 0;
+    const stageEl = document.getElementById('loading-stage');
+    const dots = document.querySelectorAll('.loading-stage-dot');
+    const advance = () => {
+        if (stageEl) stageEl.textContent = LOAD_STAGES[idx % LOAD_STAGES.length];
+        dots.forEach((d, i) => d.classList.toggle('active', i === idx % dots.length));
+        idx++;
+    };
+    advance();
+    _stageInterval = setInterval(advance, 3000);
+}
+
+function stopLoading() {
+    clearInterval(_stageInterval);
+    const loadEl = document.getElementById('results-loading');
+    if (loadEl) loadEl.style.display = 'none';
 }
 
 function showError(msg) {
-    const resultsError = document.getElementById('results-error');
-    const errorText = document.getElementById('error-text');
-    resultsError.style.display = 'flex';
-    errorText.textContent = msg;
+    stopLoading();
+    const errEl = document.getElementById('results-error');
+    const errText = document.getElementById('error-text');
+    if (errEl) errEl.style.display = 'flex';
+    if (errText) errText.textContent = msg;
+    showToast(msg, 'error');
 }
 
-// ─────────────────────────────────────────────
-// Result Renderers
-// ─────────────────────────────────────────────
+// ─── HEALTH GAUGE ──────────────────────────────────────────────────────────
+const GRADE_COLORS = { A: '#16a34a', B: '#14b8a6', C: '#eab308', D: '#f97316', F: '#ef4444' };
 
-function renderResults(feature, data) {
-    switch (feature) {
-        case 'summarize': return renderSummarize(data);
-        case 'translate': return renderTranslate(data);
-        case 'risks':     return renderRisks(data);
-        case 'tags':      return renderTags(data);
-        case 'entities':  return renderEntities(data);
-        case 'compare':   return renderCompare(data);
-        case 'multilingual': return renderMultilingual(data);
-        default:          return `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+function renderHealthGauge(score, grade, verdict) {
+    const section = document.getElementById('health-section');
+    const fill = document.getElementById('gauge-fill');
+    const scoreEl = document.getElementById('gauge-score');
+    const gradeEl = document.getElementById('gauge-grade');
+    const verdictEl = document.getElementById('health-verdict');
+    if (!section) return;
+
+    const circumference = 314;
+    const offset = circumference - (score / 100) * circumference;
+    const color = GRADE_COLORS[grade] || '#888';
+
+    if (fill) { fill.style.strokeDashoffset = offset; fill.style.stroke = color; }
+    if (scoreEl) scoreEl.textContent = score;
+    if (gradeEl) { gradeEl.textContent = grade; gradeEl.style.color = color; }
+    if (verdictEl) verdictEl.textContent = verdict || '';
+
+    section.style.display = 'block';
+}
+
+// ─── CONTRACT TYPE BADGE ───────────────────────────────────────────────────
+const TYPE_COLORS = {
+    NDA: 'purple', EMPLOYMENT: 'blue', SAAS_TOS: 'cyan',
+    FREELANCE: 'green', RENTAL: 'amber', LOAN: 'rose',
+    PARTNERSHIP: 'indigo', UNKNOWN: 'gray',
+};
+
+function renderContractTypeBadge(contractType) {
+    const badge = document.getElementById('contract-type-badge');
+    if (!badge || !contractType) return;
+    const color = TYPE_COLORS[contractType] || 'gray';
+    badge.textContent = contractType;
+    badge.className = `contract-type-badge badge-${contractType.toLowerCase()}`;
+    badge.setAttribute('data-color', color);
+    document.getElementById('results-meta').style.display = 'flex';
+}
+
+// ─── RISK CARDS ────────────────────────────────────────────────────────────
+function renderRisks(risks) {
+    const section = document.getElementById('risks-section');
+    const container = document.getElementById('risk-cards');
+    const breakdownEl = document.getElementById('risk-breakdown-badges');
+    if (!section || !container) return;
+    if (!risks || risks.length === 0) return;
+
+    const counts = { HIGH: 0, MEDIUM: 0, LOW: 0 };
+    risks.forEach(r => { if (counts[r.severity] !== undefined) counts[r.severity]++; });
+
+    if (breakdownEl) {
+        breakdownEl.innerHTML = Object.entries(counts).map(([sev, n]) =>
+            `<span class="sev-badge sev-${sev.toLowerCase()}">${sev}: ${n}</span>`
+        ).join('');
     }
-}
 
-function renderSummarize(d) {
-    let html = renderSummaryCard(d.quick_summary);
-    html += `<p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:var(--space-lg);">Total clauses found: <strong style="color:var(--gold-primary)">${d.total_clauses || '—'}</strong></p>`;
-
-    if (d.clauses) {
-        d.clauses.forEach(c => {
-            html += `<div class="result-item">
-                <div class="result-item-header">
-                    <span class="result-item-title">${esc(c.title || 'Clause')}</span>
-                    <span class="result-item-number">Clause ${c.clause_number}</span>
+    container.innerHTML = risks.map((risk, i) => {
+        const sev = (risk.severity || 'LOW').toUpperCase();
+        const clause = DOMPurify.sanitize(risk.clause || 'Unknown Clause');
+        const explanation = DOMPurify.sanitize(risk.explanation || '');
+        const redline = DOMPurify.sanitize(risk.suggested_redline || '');
+        return `
+        <div class="risk-card risk-card--${sev.toLowerCase()}">
+            <span class="sev-pill sev-${sev.toLowerCase()}">${sev}</span>
+            <h4 class="risk-clause">${clause}</h4>
+            <p class="risk-explanation">${explanation}</p>
+            ${redline ? `
+            <div class="redline-section">
+                <button class="redline-toggle" onclick="toggleRedline(this)" aria-expanded="false">
+                    💬 Negotiation Language <span class="toggle-arrow">▶</span>
+                </button>
+                <div class="redline-content" style="display:none;">
+                    <p class="redline-text" id="redline-${i}">${redline}</p>
+                    <button class="copy-btn" onclick="copyRedline('redline-${i}')">📋 Copy</button>
                 </div>
-                ${c.original_text_snippet ? `<div class="original-snippet">"${esc(c.original_text_snippet)}"</div>` : ''}
-                <p class="plain-text-block">${esc(c.plain_summary || '')}</p>
-                ${renderKeyPoints(c.key_points)}
-            </div>`;
-        });
-    }
+            </div>` : ''}
+        </div>`;
+    }).join('');
 
-    html += renderRecommendations(d.recommendations);
-    return html;
+    section.style.display = 'block';
 }
 
-function renderTranslate(d) {
-    let html = renderSummaryCard(d.quick_summary);
-    html += `<p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:var(--space-lg);">Overall complexity: <span class="severity severity-${(d.overall_complexity || 'medium').toLowerCase()}">${d.overall_complexity || '—'}</span></p>`;
-
-    if (d.sections) {
-        d.sections.forEach(s => {
-            html += `<div class="result-item">
-                <div class="result-item-header">
-                    <span class="result-item-title">${esc(s.original_heading || 'Section')}</span>
-                    <span class="severity severity-${(s.complexity_rating || 'medium').toLowerCase()}">${s.complexity_rating || '—'}</span>
-                </div>
-                ${s.original_text_snippet ? `<div class="original-snippet">"${esc(s.original_text_snippet)}"</div>` : ''}
-                <p class="plain-text-block">${esc(s.plain_language || '')}</p>
-                ${s.why_it_matters ? `<p style="margin-top:var(--space-sm);font-size:0.85rem;color:var(--gold-primary);">💡 ${esc(s.why_it_matters)}</p>` : ''}
-            </div>`;
-        });
-    }
-
-    // Jargon glossary
-    if (d.jargon_glossary && d.jargon_glossary.length > 0) {
-        html += `<div class="result-item">
-            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">📖 Jargon Glossary</h3>
-            <table class="glossary-table">
-                <thead><tr><th>Legal Term</th><th>Plain Meaning</th></tr></thead>
-                <tbody>${d.jargon_glossary.map(g => `<tr><td><strong>${esc(g.term)}</strong></td><td>${esc(g.plain_meaning)}</td></tr>`).join('')}</tbody>
-            </table>
-        </div>`;
-    }
-
-    html += renderRecommendations(d.recommendations);
-    return html;
+function toggleRedline(btn) {
+    const content = btn.nextElementSibling;
+    const arrow = btn.querySelector('.toggle-arrow');
+    const open = content.style.display !== 'none';
+    content.style.display = open ? 'none' : 'block';
+    if (arrow) arrow.textContent = open ? '▶' : '▼';
+    btn.setAttribute('aria-expanded', !open);
 }
 
-function renderRisks(d) {
-    let html = renderSummaryCard(d.quick_summary);
-
-    // Risk breakdown
-    const rb = d.risk_breakdown || {};
-    html += `<div class="risk-breakdown">
-        <div class="risk-stat"><span class="risk-dot risk-dot-high"></span> HIGH: <strong>${rb.HIGH || 0}</strong></div>
-        <div class="risk-stat"><span class="risk-dot risk-dot-medium"></span> MEDIUM: <strong>${rb.MEDIUM || 0}</strong></div>
-        <div class="risk-stat"><span class="risk-dot risk-dot-low"></span> LOW: <strong>${rb.LOW || 0}</strong></div>
-        <span style="margin-left:auto;font-size:0.85rem;color:var(--text-muted);">Overall: <span class="severity severity-${(d.overall_risk_level || 'medium').toLowerCase()}">${d.overall_risk_level || '—'}</span></span>
-    </div>`;
-
-    if (d.risks) {
-        d.risks.forEach(r => {
-            html += `<div class="result-item">
-                <div class="result-item-header">
-                    <span class="result-item-title">⚠️ ${esc(r.risk_type || 'Risk')}</span>
-                    <span class="severity severity-${(r.severity || 'medium').toLowerCase()}">${r.severity || '—'}</span>
-                </div>
-                ${r.clause_text_snippet ? `<div class="original-snippet">"${esc(r.clause_text_snippet)}"</div>` : ''}
-                <p class="plain-text-block">${esc(r.explanation || '')}</p>
-                ${r.potential_impact ? `<p style="margin-top:var(--space-sm);font-size:0.88rem;color:var(--risk-medium);">⚡ Impact: ${esc(r.potential_impact)}</p>` : ''}
-                ${r.negotiation_tip ? `<div class="negotiation-tip"><strong>💡 Negotiation tip:</strong> ${esc(r.negotiation_tip)}</div>` : ''}
-            </div>`;
-        });
-    }
-
-    if (d.safe_clauses_note) {
-        html += `<div class="result-item" style="border-color:rgba(39,174,96,0.2);">
-            <p style="color:var(--risk-low);">✅ ${esc(d.safe_clauses_note)}</p>
-        </div>`;
-    }
-
-    html += renderRecommendations(d.recommendations);
-    return html;
+function copyRedline(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    navigator.clipboard.writeText(el.textContent).then(() => showToast('Copied to clipboard!', 'success'));
 }
 
-function renderTags(d) {
-    let html = renderSummaryCard(d.quick_summary);
+// ─── OBLIGATIONS TABLE ─────────────────────────────────────────────────────
+function renderObligations(obligations) {
+    const section = document.getElementById('obligations-section');
+    const tbody = document.getElementById('obligations-body');
+    const emptyEl = document.getElementById('obligations-empty');
+    if (!section || !tbody) return;
 
-    // Category frequency
-    if (d.category_frequency) {
-        html += `<div class="frequency-grid">`;
-        for (const [cat, count] of Object.entries(d.category_frequency)) {
-            if (count > 0) {
-                html += `<span class="freq-chip">${esc(cat)} <strong>${count}</strong></span>`;
-            }
-        }
-        html += `</div>`;
+    if (!obligations || obligations.length === 0) {
+        if (emptyEl) emptyEl.style.display = 'flex';
+        section.style.display = 'block';
+        return;
     }
-
-    if (d.tagged_clauses) {
-        d.tagged_clauses.forEach(c => {
-            html += `<div class="result-item">
-                <div class="result-item-header">
-                    <span class="category-tag">${esc(c.primary_category || 'Other')}</span>
-                    <span class="result-item-number">Clause ${c.clause_number}</span>
-                    <span class="severity severity-${(c.confidence || 'medium').toLowerCase()}">${c.confidence || '—'}</span>
-                </div>
-                ${c.text_snippet ? `<div class="original-snippet">"${esc(c.text_snippet)}"</div>` : ''}
-                ${c.brief_note ? `<p class="plain-text-block">${esc(c.brief_note)}</p>` : ''}
-                ${c.secondary_tags && c.secondary_tags.length ? `<div style="margin-top:var(--space-sm);display:flex;gap:4px;flex-wrap:wrap;">${c.secondary_tags.map(t => `<span class="freq-chip">${esc(t)}</span>`).join('')}</div>` : ''}
-            </div>`;
-        });
-    }
-
-    // Missing categories
-    if (d.missing_categories && d.missing_categories.length > 0) {
-        html += `<div class="result-item" style="border-color:rgba(243,156,18,0.2);">
-            <p style="color:var(--risk-medium);font-size:0.9rem;">⚠️ Missing categories commonly expected in contracts:</p>
-            <div style="margin-top:var(--space-sm);display:flex;gap:4px;flex-wrap:wrap;">${d.missing_categories.map(c => `<span class="freq-chip">${esc(c)}</span>`).join('')}</div>
-        </div>`;
-    }
-
-    html += renderRecommendations(d.recommendations);
-    return html;
+    if (emptyEl) emptyEl.style.display = 'none';
+    tbody.innerHTML = obligations.map((obl, i) => `
+        <tr class="${i % 2 === 0 ? 'row-even' : 'row-odd'}">
+            <td>${i + 1}</td>
+            <td>${DOMPurify.sanitize(obl.obligation || '')}</td>
+            <td>${DOMPurify.sanitize(obl.party || '')}</td>
+            <td>${DOMPurify.sanitize(obl.deadline_description || '')}</td>
+            <td>${DOMPurify.sanitize(obl.section || '')}</td>
+        </tr>`).join('');
+    section.style.display = 'block';
 }
 
-function renderEntities(d) {
-    let html = renderSummaryCard(d.quick_summary);
+// ─── KEY ENTITIES ──────────────────────────────────────────────────────────
+function renderEntities(keyEntities) {
+    const section = document.getElementById('entities-section');
+    const grid = document.getElementById('entities-grid');
+    if (!section || !grid || !keyEntities) return;
 
-    // Parties
-    if (d.parties && d.parties.length > 0) {
-        html += `<div class="result-item">
-            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">🤝 Parties &amp; Obligations</h3>`;
-        d.parties.forEach(p => {
-            html += `<div style="margin-bottom:var(--space-md);padding:var(--space-sm);border-left:3px solid var(--gold-primary);">
-                <p style="font-weight:600;color:var(--gold-primary);">${esc(p.role || 'Party')}: <span style="color:var(--text-primary);">${esc(p.name || '—')}</span></p>
-                ${renderKeyPoints(p.key_obligations)}
-            </div>`;
-        });
-        html += `</div>`;
-    }
-
-    // Important dates
-    if (d.important_dates && d.important_dates.length > 0) {
-        html += `<div class="result-item">
-            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">📅 Key Dates</h3>
-            <table class="glossary-table">
-                <thead><tr><th>Label</th><th>Value</th><th>Note</th></tr></thead>
-                <tbody>${d.important_dates.map(dt =>
-                    `<tr><td><strong>${esc(dt.label)}</strong></td><td style="color:var(--gold-primary);">${esc(dt.value)}</td><td>${esc(dt.note)}</td></tr>`
-                ).join('')}</tbody>
-            </table>
-        </div>`;
-    }
-
-    // Payment terms
-    if (d.payment_terms) {
-        const pt = d.payment_terms;
-        html += `<div class="result-item">
-            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">💰 Payment Terms</h3>
-            <table class="glossary-table">
-                <tbody>
-                    <tr><td><strong>Amount</strong></td><td>${esc(pt.amount || '—')}</td></tr>
-                    <tr><td><strong>Currency</strong></td><td>${esc(pt.currency || '—')}</td></tr>
-                    <tr><td><strong>Schedule</strong></td><td>${esc(pt.schedule || '—')}</td></tr>
-                    <tr><td><strong>Late Penalty</strong></td><td>${esc(pt.late_penalty || '—')}</td></tr>
-                </tbody>
-            </table>
-        </div>`;
-    }
-
-    // Governing law
-    if (d.governing_law) {
-        const gl = d.governing_law;
-        html += `<div class="result-item">
-            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">⚖️ Governing Law</h3>
-            <p><strong>Jurisdiction:</strong> ${esc(gl.jurisdiction || '—')}</p>
-            <p><strong>Forum:</strong> ${esc(gl.court_or_arbitration || '—')}</p>
-            ${gl.risk_note ? `<p style="margin-top:var(--space-sm);color:var(--risk-medium);font-size:0.88rem;">⚡ ${esc(gl.risk_note)}</p>` : ''}
-        </div>`;
-    }
-
-    // Notice period
-    if (d.notice_period && d.notice_period !== 'N/A') {
-        html += `<div class="result-item">
-            <p>📣 <strong>Notice Period:</strong> ${esc(d.notice_period)}</p>
-        </div>`;
-    }
-
-    // Defined terms
-    if (d.defined_terms && d.defined_terms.length > 0) {
-        html += `<div class="result-item">
-            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">📖 Defined Terms</h3>
-            <table class="glossary-table">
-                <thead><tr><th>Term</th><th>Definition</th></tr></thead>
-                <tbody>${d.defined_terms.map(dt =>
-                    `<tr><td><strong>${esc(dt.term)}</strong></td><td>${esc(dt.definition)}</td></tr>`
-                ).join('')}</tbody>
-            </table>
-        </div>`;
-    }
-
-    // Missing entities warning
-    if (d.missing_entities && d.missing_entities.length > 0) {
-        html += `<div class="result-item" style="border-color:rgba(243,156,18,0.2);">
-            <p style="color:var(--risk-medium);font-size:0.9rem;">⚠️ Fields not found in this contract:</p>
-            <div style="margin-top:var(--space-sm);display:flex;gap:4px;flex-wrap:wrap;">${d.missing_entities.map(e => `<span class="freq-chip">${esc(e)}</span>`).join('')}</div>
-        </div>`;
-    }
-
-    html += renderRecommendations(d.recommendations);
-    return html;
+    const parties = (keyEntities.parties || []).join(', ') || 'N/A';
+    const items = [
+        { label: '👥 Parties', value: parties },
+        { label: '📅 Effective Date', value: keyEntities.effective_date || 'N/A' },
+        { label: '⚖️ Governing Law', value: keyEntities.governing_law || 'N/A' },
+        { label: '📢 Termination Notice', value: keyEntities.termination_notice || 'N/A' },
+    ];
+    grid.innerHTML = items.map(item => `
+        <div class="entity-card">
+            <div class="entity-label">${item.label}</div>
+            <div class="entity-value">${DOMPurify.sanitize(String(item.value))}</div>
+        </div>`).join('');
+    section.style.display = 'block';
 }
 
-function renderCompare(d) {
-    let html = renderSummaryCard(d.quick_summary);
+// ─── RENDER UNIFIED RESULT ─────────────────────────────────────────────────
+let _currentAnalysisId = null;
 
-    // Verdict badge
-    const verdictMap = {
-        FAVORABLE_TO_A: { label: 'Favors Original (A)', cls: 'severity-low' },
-        FAVORABLE_TO_B: { label: 'Favors Revision (B)', cls: 'severity-high' },
-        NEUTRAL:        { label: 'Neutral', cls: 'severity-low' },
-        MIXED:          { label: 'Mixed', cls: 'severity-medium' },
-    };
-    const verdict = verdictMap[d.overall_verdict] || { label: d.overall_verdict || '—', cls: 'severity-medium' };
-    html += `<div style="margin-bottom:var(--space-lg);display:flex;align-items:center;gap:var(--space-md);flex-wrap:wrap;">
-        <span>Overall Verdict: <span class="severity ${verdict.cls}">${verdict.label}</span></span>
-        <span style="color:var(--text-muted);font-size:0.85rem;">Total changes: <strong style="color:var(--gold-primary);">${d.total_changes || 0}</strong></span>
-    </div>`;
+function renderUnifiedResult(data) {
+    stopLoading();
+    const contentEl = document.getElementById('results-content');
+    if (!contentEl) return;
+    contentEl.style.display = 'block';
 
-    // Changes
-    if (d.changes && d.changes.length > 0) {
-        d.changes.forEach(c => {
-            const sevCls = `severity-${(c.impact_severity || 'medium').toLowerCase()}`;
-            html += `<div class="result-item">
-                <div class="result-item-header">
-                    <span class="result-item-title">🔀 ${esc(c.clause_or_section || 'Change')}</span>
-                    <span class="severity ${sevCls}">${c.impact_severity || '—'}</span>
-                    <span style="font-size:0.78rem;color:var(--text-muted);">${esc(c.change_type || '')}</span>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-sm);margin:var(--space-sm) 0;">
-                    <div class="original-snippet" style="border-left-color:#e74c3c;">🅰 ${esc(c.original_text_snippet || '—')}</div>
-                    <div class="original-snippet" style="border-left-color:#27ae60;">🅱 ${esc(c.revised_text_snippet || '—')}</div>
-                </div>
-                <p class="plain-text-block">${esc(c.plain_explanation || '')}</p>
-                ${c.who_benefits ? `<p style="font-size:0.85rem;color:var(--text-muted);">👤 Benefits: <strong>${esc(c.who_benefits)}</strong></p>` : ''}
-                ${c.negotiation_note ? `<div class="negotiation-tip"><strong>💡 Negotiation note:</strong> ${esc(c.negotiation_note)}</div>` : ''}
-            </div>`;
-        });
+    _currentAnalysisId = data.analysis_id || null;
+
+    const r = data.result || {};
+    const contractType = r.contract_type || data.contract_type || 'UNKNOWN';
+
+    renderContractTypeBadge(contractType);
+    renderHealthGauge(r.health_score || 0, r.health_grade || 'F', r.health_verdict || '');
+
+    // Summary
+    const summaryBlock = document.getElementById('summary-block');
+    const summaryText = document.getElementById('summary-text');
+    if (r.summary && summaryText) {
+        summaryText.textContent = r.summary;
+        if (summaryBlock) summaryBlock.style.display = 'block';
     }
 
-    // Unchanged key clauses
-    if (d.unchanged_key_clauses && d.unchanged_key_clauses.length > 0) {
-        html += `<div class="result-item" style="border-color:rgba(39,174,96,0.2);">
-            <p style="color:var(--risk-low);font-weight:600;margin-bottom:var(--space-sm);">✅ Key clauses unchanged:</p>
-            <ul class="key-points">${d.unchanged_key_clauses.map(cl => `<li>${esc(cl)}</li>`).join('')}</ul>
-        </div>`;
+    renderEntities(r.key_entities || {});
+    renderRisks(r.risks || []);
+    renderObligations(r.obligations || []);
+
+    // Export button
+    const exportBtn = document.getElementById('export-btn');
+    if (exportBtn && _currentAnalysisId) {
+        exportBtn.style.display = 'inline-flex';
+        exportBtn.onclick = () => window.open(`/api/export/${_currentAnalysisId}`, '_blank');
     }
 
-    // Executive recommendation
-    if (d.executive_recommendation) {
-        html += `<div class="result-summary-card" style="margin-top:var(--space-lg);border-color:var(--gold-primary);">
-            <h3>🎯 Executive Recommendation</h3>
-            <p>${esc(d.executive_recommendation)}</p>
-        </div>`;
+    // Show chat section
+    const chatSection = document.getElementById('chat-section');
+    if (chatSection) chatSection.style.display = 'block';
+}
+
+// ─── RENDER LEGACY RESULT ──────────────────────────────────────────────────
+function renderLegacyResult(data) {
+    stopLoading();
+    const contentEl = document.getElementById('results-content');
+    const genericEl = document.getElementById('generic-results-content');
+    if (!contentEl || !genericEl) return;
+    contentEl.style.display = 'block';
+
+    const r = data.result || {};
+    const label = DOMPurify.sanitize(data.feature_label || data.feature || '');
+    let html = `<div class="legacy-result"><h3 class="section-heading">${label}</h3>`;
+
+    if (r.quick_summary) {
+        html += `<p class="quick-summary">${DOMPurify.sanitize(r.quick_summary)}</p>`;
     }
-
-    html += renderRecommendations(d.recommendations);
-    return html;
-}
-
-function renderMultilingual(d) {
-    let html = `<div class="result-summary-card">
-        <h3>🌐 Translated to: <span style="color:var(--gold-primary);">${esc(d.target_language || '—')}</span></h3>
-        <p>${esc(d.quick_summary || '')}</p>
-    </div>`;
-
-    if (d.sections && d.sections.length > 0) {
-        d.sections.forEach(s => {
-            html += `<div class="result-item">
-                <div class="result-item-header">
-                    <span class="result-item-title">${esc(s.translated_heading || s.original_heading || 'Section')}</span>
-                    <span class="result-item-number">§${s.section_number}</span>
-                </div>
-                <p class="plain-text-block">${esc(s.translated_text || '')}</p>
-                ${s.key_obligation ? `<p style="margin-top:var(--space-sm);font-size:0.85rem;color:var(--gold-primary);">🔑 ${esc(s.key_obligation)}</p>` : ''}
-            </div>`;
-        });
-    }
-
-    // Critical terms glossary
-    if (d.critical_terms_glossary && d.critical_terms_glossary.length > 0) {
-        html += `<div class="result-item">
-            <h3 class="result-item-title" style="margin-bottom:var(--space-md);">📖 Critical Terms Glossary</h3>
-            <table class="glossary-table">
-                <thead><tr><th>Original Term</th><th>Translated Term</th><th>Plain Meaning</th></tr></thead>
-                <tbody>${d.critical_terms_glossary.map(g =>
-                    `<tr><td><strong>${esc(g.original_term)}</strong></td><td style="color:var(--gold-primary);">${esc(g.translated_term)}</td><td>${esc(g.plain_explanation)}</td></tr>`
-                ).join('')}</tbody>
-            </table>
-        </div>`;
-    }
-
-    // Translation notes
-    if (d.translation_notes && d.translation_notes.length > 0) {
-        html += `<div class="result-item" style="border-color:rgba(243,156,18,0.2);">
-            <p style="color:var(--risk-medium);font-weight:600;margin-bottom:var(--space-sm);">📝 Translator Notes:</p>
-            <ul class="key-points">${d.translation_notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
-        </div>`;
-    }
-
-    html += renderRecommendations(d.recommendations);
-    return html;
-}
-
-// ─────────────────────────────────────────────
-// Shared render helpers
-// ─────────────────────────────────────────────
-
-function renderSummaryCard(summary) {
-    if (!summary) return '';
-    return `<div class="result-summary-card">
-        <h3>📌 Quick Summary</h3>
-        <p>${esc(summary)}</p>
-    </div>`;
-}
-
-function renderKeyPoints(points) {
-    if (!points || points.length === 0) return '';
-    return `<ul class="key-points">${points.map(p => `<li>${esc(p)}</li>`).join('')}</ul>`;
-}
-
-function renderRecommendations(recs) {
-    if (!recs || recs.length === 0) return '';
-    return `<div class="recommendations">
-        <h3>💡 Recommendations</h3>
-        <ul>${recs.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
-    </div>`;
-}
-
-// ─────────────────────────────────────────────
-// Follow-up Chat
-// ─────────────────────────────────────────────
-
-function sendChat(message) {
-    const chatMessages = document.getElementById('chat-messages');
-    const sendBtn = document.getElementById('send-btn');
-
-    // Add user message
-    appendChatMessage('user', message);
-    sendBtn.disabled = true;
-
-    fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
-    })
-    .then(r => r.json())
-    .then(data => {
-        sendBtn.disabled = false;
-        if (data.error) {
-            appendChatMessage('assistant', `⚠️ ${data.error}`);
-        } else {
-            appendChatMessage('assistant', data.answer || 'No response.');
-
-            // Show follow-up suggestions
-            if (data.follow_up_suggestions && data.follow_up_suggestions.length > 0) {
-                renderSuggestions(data.follow_up_suggestions);
-            }
-        }
-        updateMemoryCount();
-    })
-    .catch(err => {
-        sendBtn.disabled = false;
-        appendChatMessage('assistant', `❌ Network error: ${err.message}`);
-    });
-}
-
-function appendChatMessage(role, content) {
-    const chatMessages = document.getElementById('chat-messages');
-    const avatar = role === 'user' ? '👤' : '⚖️';
-    const div = document.createElement('div');
-    div.className = `message message-${role}`;
-    div.innerHTML = `
-        <div class="message-avatar">${avatar}</div>
-        <div class="message-bubble">${esc(content)}</div>
-    `;
-    chatMessages.appendChild(div);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-function renderSuggestions(suggestions) {
-    // Remove old suggestions
-    const old = document.querySelector('.follow-up-suggestions');
-    if (old) old.remove();
-
-    const container = document.createElement('div');
-    container.className = 'follow-up-suggestions';
-    suggestions.forEach(s => {
-        const chip = document.createElement('button');
-        chip.className = 'suggestion-chip';
-        chip.textContent = s;
-        chip.onclick = () => {
-            document.getElementById('chat-input').value = s;
-            sendChat(s);
-            document.getElementById('chat-input').value = '';
-            container.remove();
-        };
-        container.appendChild(chip);
-    });
+    html += `<pre class="json-dump">${DOMPurify.sanitize(JSON.stringify(r, null, 2))}</pre></div>`;
+    genericEl.innerHTML = html;
 
     const chatSection = document.getElementById('chat-section');
-    const chatInputContainer = chatSection.querySelector('.chat-input-container');
-    chatSection.insertBefore(container, chatInputContainer);
+    if (chatSection) chatSection.style.display = 'block';
 }
 
-// ─────────────────────────────────────────────
-// Memory
-// ─────────────────────────────────────────────
+// ─── ANALYZE (UNIFIED) ─────────────────────────────────────────────────────
+async function runUnifiedAnalysis(contractText) {
+    startLoading();
+    try {
+        const resp = await apiFetch('/api/analyze', {
+            method: 'POST',
+            body: JSON.stringify({ contract_text: contractText }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            showError(data.error || 'Analysis failed. Please try again.');
+            return;
+        }
+        renderUnifiedResult(data);
+        updateMemoryCount();
+    } catch (e) {
+        showError('A network error occurred. Please check your connection.');
+    }
+}
 
+// ─── ANALYZE (LEGACY FEATURE) ──────────────────────────────────────────────
+async function runFeatureAnalysis(feature, contractText, extraContext = '') {
+    startLoading();
+    try {
+        const resp = await apiFetch('/api/analyze/feature', {
+            method: 'POST',
+            body: JSON.stringify({ feature, contract_text: contractText, extra_context: extraContext }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            showError(data.error || 'Analysis failed. Please try again.');
+            return;
+        }
+        renderLegacyResult(data);
+        updateMemoryCount();
+    } catch (e) {
+        showError('A network error occurred.');
+    }
+}
+
+// ─── UPLOAD ────────────────────────────────────────────────────────────────
+async function uploadFile(file) {
+    const statusEl = document.getElementById('upload-status');
+    const nameEl = document.getElementById('upload-filename');
+    const charsEl = document.getElementById('upload-chars');
+    const zoneEl = document.getElementById('upload-zone');
+
+    if (zoneEl) zoneEl.classList.add('uploading');
+
+    const fd = new FormData();
+    fd.append('file', file);
+
+    try {
+        const resp = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCsrf() },
+            body: fd,
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            showToast(data.error || 'Upload failed.', 'error');
+            return;
+        }
+        if (nameEl) nameEl.textContent = data.filename;
+        if (charsEl) charsEl.textContent = `${data.char_count.toLocaleString()} chars`;
+        if (statusEl) statusEl.style.display = 'block';
+        showToast(data.message, 'success');
+    } catch (e) {
+        showToast('Upload failed. Please try again.', 'error');
+    } finally {
+        if (zoneEl) zoneEl.classList.remove('uploading');
+    }
+}
+
+// ─── CHAT ──────────────────────────────────────────────────────────────────
+async function sendChat(message) {
+    const msgsEl = document.getElementById('chat-messages');
+    if (!msgsEl) return;
+
+    const userBubble = document.createElement('div');
+    userBubble.className = 'chat-bubble chat-bubble--user';
+    userBubble.textContent = message;
+    msgsEl.appendChild(userBubble);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+
+    try {
+        const resp = await apiFetch('/api/chat', {
+            method: 'POST',
+            body: JSON.stringify({ message, analysis_id: _currentAnalysisId }),
+        });
+        const data = await resp.json();
+        const aiBubble = document.createElement('div');
+        aiBubble.className = 'chat-bubble chat-bubble--ai';
+        aiBubble.innerHTML = DOMPurify.sanitize(data.answer || data.error || 'No response.');
+        msgsEl.appendChild(aiBubble);
+        msgsEl.scrollTop = msgsEl.scrollHeight;
+        updateMemoryCount();
+    } catch (e) {
+        showToast('Chat request failed.', 'error');
+    }
+}
+
+// ─── MEMORY COUNT ──────────────────────────────────────────────────────────
 function updateMemoryCount() {
     fetch('/api/memory')
         .then(r => r.json())
-        .then(data => {
+        .then(d => {
             const el = document.getElementById('memory-turns');
-            if (el) el.textContent = data.turn_count || 0;
+            if (el) el.textContent = d.turn_count || 0;
         })
         .catch(() => {});
 }
 
-function clearMemory() {
-    if (!confirm('Clear all session memory?')) return;
-    fetch('/api/clear-memory', { method: 'POST' })
-        .then(r => r.json())
-        .then(() => {
-            updateMemoryCount();
-            document.getElementById('upload-status').style.display = 'none';
-            const chatMessages = document.getElementById('chat-messages');
-            if (chatMessages) chatMessages.innerHTML = '';
+// ─── ANALYZE PAGE INIT ─────────────────────────────────────────────────────
+function initAnalyzePage() {
+    // Feature button clicks
+    document.querySelectorAll('.feature-btn[data-feature]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const feature = btn.dataset.feature;
+            const contractText = document.getElementById('contract-text')?.value || '';
+
+            if (feature === 'unified') {
+                await runUnifiedAnalysis(contractText);
+                return;
+            }
+
+            let extraContext = '';
+            if (feature === 'compare') {
+                extraContext = prompt('Paste the REVISED contract text (Version B):') || '';
+                if (!extraContext.trim()) return;
+            } else if (feature === 'multilingual') {
+                extraContext = prompt('Enter target language (e.g. Spanish, French):') || '';
+                if (!extraContext.trim()) return;
+            }
+            await runFeatureAnalysis(feature, contractText, extraContext);
         });
+    });
+
+    // Upload zone
+    const zone = document.getElementById('upload-zone');
+    const fileInput = document.getElementById('file-input');
+    if (zone && fileInput) {
+        zone.addEventListener('click', () => fileInput.click());
+        zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+        zone.addEventListener('drop', e => {
+            e.preventDefault();
+            zone.classList.remove('drag-over');
+            const f = e.dataTransfer.files[0];
+            if (f) uploadFile(f);
+        });
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files[0]) uploadFile(fileInput.files[0]);
+        });
+    }
+
+    // Chat form
+    const chatForm = document.getElementById('chat-form');
+    const chatInput = document.getElementById('chat-input');
+    if (chatForm && chatInput) {
+        chatForm.addEventListener('submit', async e => {
+            e.preventDefault();
+            const msg = chatInput.value.trim();
+            if (!msg) return;
+            chatInput.value = '';
+            await sendChat(msg);
+        });
+        // Auto-grow textarea
+        chatInput.addEventListener('input', () => {
+            chatInput.style.height = 'auto';
+            chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+        });
+    }
+
+    // Clear memory button
+    document.getElementById('clear-memory-btn')?.addEventListener('click', () => {
+        apiFetch('/api/clear-memory', { method: 'POST' })
+            .then(() => { updateMemoryCount(); showToast('Memory cleared.', 'success'); });
+    });
+
+    updateMemoryCount();
 }
 
-// ─────────────────────────────────────────────
-// Utility
-// ─────────────────────────────────────────────
-
-function esc(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
-}
+// ─── GLOBAL INIT ───────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
+    // Nav mobile toggle
+    document.getElementById('nav-toggle')?.addEventListener('click', () => {
+        document.getElementById('nav-links')?.classList.toggle('open');
+    });
+});
