@@ -1,0 +1,10 @@
+This MASTER SERVICE AGREEMENT ("Agreement") is made on May 1, 2026, by and between Nexus Tech Solutions ("Provider") and Global Retail Corp ("Client").
+
+1. SERVICES: Provider agrees to deliver custom software development.
+2. PAYMENT: Client will pay $50,000 within Net-60 days. Late payments incur a 5% daily penalty.
+3. IP RIGHTS: All intellectual property developed, including Provider's pre-existing code, shall exclusively belong to the Client upon signature.
+4. DATA PRIVACY: Provider will process Client customer data. Provider may transfer data to third-party servers outside India for load balancing without prior notice.
+5. LIABILITY: Provider's total liability under this Agreement is capped at $100.
+6. TERMINATION: Client may terminate this agreement at any time without notice. Provider cannot terminate.
+7. NON-COMPETE: Provider shall not work with any other retail business globally for a period of 10 years after termination.
+8. GOVERNING LAW: This Agreement shall be governed by the laws of Mars.

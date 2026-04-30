@@ -3834,3 +3834,26 @@ h4 {
         text-align: center;
     }
 }
+/* Legal Standard Select */
+.legal-standard-select {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--color-border-secondary);
+    background: var(--color-background-secondary);
+    color: var(--color-text-primary);
+    font-size: 14px;
+    cursor: pointer;
+}
+
+/* Standard Justification (Risk Cards) */
+.standard-justification {
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: var(--color-background-info, rgba(59, 130, 246, 0.1));
+    border-left: 3px solid var(--color-border-info, #3b82f6);
+    border-radius: 4px;
+    font-size: 12px;
+}
+.sj-label { font-weight: 500; margin-right: 6px; }
+.sj-text { color: var(--color-text-secondary); }

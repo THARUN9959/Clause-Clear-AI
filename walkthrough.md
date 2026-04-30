@@ -9,46 +9,50 @@ A full-stack Generative AI web application for legal contract simplification, po
 ```mermaid
 graph TB
     subgraph Frontend
-        A[index.html - Landing] --> B[analyze.html - Split Layout]
-        A --> C[history.html - Session Log]
+        A[index.html - Landing] --> B[analyze.html - Workspace]
+        A --> C[history.html - DB Viewer]
     end
     subgraph Backend
-        D[app.py - 8 Routes]
-        E[gemini_service.py - Context-Engineered Prompts]
-        F[memory_service.py - Memento Pattern]
-        G[document_service.py - PDF/TXT Parser]
+        D[app.py - Flask Routes]
+        E[gemini_service.py - Unified/Legacy Prompts & RAG]
+        F[playbooks.py - Indian Legal Standards]
+        G[document_service.py - PDF/OCR/DOCX Parser]
+        H[database.py - SQLModel CRUD]
     end
     B -->|Upload / Paste| D
-    B -->|Analyze / Chat| D
-    C -->|Memory API| D
-    D --> E --> H[Gemini API]
-    D --> F
+    B -->|Unified / Legacy Analyze| D
+    C -->|View DB History| D
+    D --> E --> I[Gemini API]
+    E --> F
     D --> G
+    D --> H --> J[(SQLite DB)]
 ```
 
 ## Project Structure
 
-```
+```text
 GENAI-2/
-├── app.py                          # Flask app — 8 routes
+├── app.py                          # Flask app
 ├── config.py                       # Config + env loading
-├── requirements.txt                # 4 dependencies
-├── .env                            # Gemini API key
-├── .gitignore
+├── requirements.txt                # Dependencies
+├── .env                            # Environment variables (not in version control)
+├── clauseclear.db                  # SQLite database (generated)
 ├── services/
-│   ├── __init__.py
-│   ├── gemini_service.py           # 4 feature prompts + chat (context-engineered)
-│   ├── memory_service.py           # Memento pattern — last 10 turns
-│   └── document_service.py         # PDF + TXT extraction
+│   ├── gemini_service.py           # GenAI logic, self-critique, RAG, & legacy prompts
+│   ├── benchmark_service.py        # Market standard benchmark data
+│   ├── playbooks.py                # Indian Legal Standard instructions
+│   ├── memory_service.py           # Legacy in-memory session (falling back to DB)
+│   ├── database.py                 # SQLModel models and CRUD operations
+│   └── document_service.py         # PDF, DOCX, and OCR extraction
 ├── templates/
-│   ├── base.html                   # Nav + footer + fonts
-│   ├── index.html                  # Hero + feature cards + context engineering info
-│   ├── analyze.html                # Split layout: input left, results right
-│   └── history.html                # Session stats + timeline + turn log
+│   ├── base.html                   # Global layout
+│   ├── index.html                  # Landing page
+│   ├── analyze.html                # Main analysis workspace
+│   └── history.html                # Database visualizer
 ├── static/
-│   ├── css/style.css               # Dark navy + amber/gold + Playfair serif
-│   └── js/app.js                   # Upload, 4 renderers, chat, memory
-└── uploads/
+│   ├── css/style.css               # Core styling
+│   └── js/app.js                   # Frontend interactivity & API calls
+└── uploads/                        # Temporary file upload directory
 ```
 
 ## Context Engineering Implementation
@@ -59,9 +63,10 @@ Every Gemini API call follows these principles:
 |---|---|
 | **System Prompt** | Role: "senior legal contract analyst". Behavioral guidelines + capability boundaries in every prompt |
 | **Structured I/O** | Each feature has a strict JSON schema. Model instructed: "Return ONLY the JSON object. No markdown, no preamble." |
-| **Session Memory** | Last 10 turns stored via Memento pattern, injected as `CONVERSATION MEMORY` block |
-| **RAG Context** | Contract text injected as `GROUNDING CONTEXT` in every prompt |
-| **Instruction Hierarchy** | Priority 1: Safety → Priority 2: User constraints → Priority 3: Output format → Priority 4: Enhancement |
+| **Session Memory** | Last 10 turns stored via SQLModel in SQLite |
+| **RAG Context** | Embeds prior high-risk clauses via `text-embedding-004` and compares new clauses via cosine similarity. |
+| **Self-Critique** | Evaluates its own initial analysis in a second pass to correct overstated risks or formatting errors. |
+| **Legal Playbooks** | Explicitly instructs Gemini to ground analysis in specific statutes (e.g., Indian Contract Act 1872). |
 | **Progressive Disclosure** | Every response: `quick_summary` → detailed analysis → `recommendations` |
 
 ## Routes

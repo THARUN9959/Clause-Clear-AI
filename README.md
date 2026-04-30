@@ -4,22 +4,21 @@ ClauseClear AI is a full-stack Generative AI web application designed for legal 
 
 ## Features
 
-* **Advanced Context Engineering:** Implements system prompts, structured I/O (JSON), and progressive disclosure to ensure safety, boundaries, and reliability.
-* **4 Core Analysis Modes:**
-  1. Summarization
-  2. Plain-English Translation
-  3. Risk Highlighting
-  4. Clause Tagging
-* **Session Memory (Memento Pattern):** Chat with your contract! Remembers the last 10 turns of conversation for seamless follow-up questions.
-* **RAG Context Integration:** Extracts PDF/TXT text and injects it as `GROUNDING CONTEXT` in every prompt.
-* **Professional UI:** Dark-themed UI (navy/amber/gold) modeled after premium legal software, featuring split layouts, glassmorphism, and subtle animations.
+* **Unified Analysis:** Single API call provides contract classification, health scoring, risk analysis, and obligations extraction.
+* **Indian Legal Playbooks:** Grounds risk assessments in strict statutory frameworks (Indian Contract Act 1872, DPDP Act 2023, IT Act).
+* **Self-Critique QA Loop:** AI automatically reviews its own output for accuracy and over/understated risks before presenting to the user.
+* **RAG Context Integration:** Uses `text-embedding-004` and cosine similarity to inject historical precedent data into new analyses.
+* **Legacy & New Feature Modes:** Supports Summarization, Plain-English Translation, Tagging, Checklist Compliance, Contract Comparison (Redlining), Multilingual Translation, and Entity Extraction.
+* **Document Parsing & OCR:** Supports TXT, PDF (both text-based and scanned image-based using `pytesseract`), and DOCX files.
+* **Session Memory & Persistence:** Uses SQLModel to persist conversation history, analysis results, and embeddings to a SQLite database.
+* **Professional UI:** Dark-themed UI modeled after premium legal software, featuring glassmorphism, responsive split layouts, and a multi-select feature runner.
 
 ## Tech Stack
 
-* **Backend:** Flask (Python)
-* **AI Provider:** Google GenAI API (`google-genai`), Gemini 2.5 Flash Lite
-* **Frontend:** HTML5, CSS3 (Vanilla), Vanilla JavaScript
-* **Utilities:** `PyPDF2` (Document Parsing), `python-dotenv` (Config Management)
+* **Backend:** Flask (Python), SQLModel (SQLite)
+* **AI Provider:** Google GenAI API (`google-genai`), Gemini 2.5 Flash Lite, text-embedding-004
+* **Frontend:** HTML5, CSS3 (Vanilla), Vanilla JavaScript, DOMPurify
+* **Utilities:** `PyPDF2`, `pdf2image`, `pytesseract`, `python-docx` (Document Parsing)
 
 ## Getting Started
 
@@ -66,42 +65,48 @@ Then, open your browser and navigate to `http://127.0.0.1:5000/`.
 ```mermaid
 graph TB
     subgraph Frontend
-        A[index.html - Landing] --> B[analyze.html - Split Layout]
-        A --> C[history.html - Session Log]
+        A[index.html - Landing] --> B[analyze.html - Workspace]
+        A --> C[history.html - DB Viewer]
     end
     subgraph Backend
-        D[app.py - 8 Routes]
-        E[gemini_service.py - Context-Engineered Prompts]
-        F[memory_service.py - Memento Pattern]
-        G[document_service.py - PDF/TXT Parser]
+        D[app.py - Flask Routes]
+        E[gemini_service.py - Unified/Legacy Prompts & RAG]
+        F[playbooks.py - Indian Legal Standards]
+        G[document_service.py - PDF/OCR/DOCX Parser]
+        H[database.py - SQLModel CRUD]
     end
     B -->|Upload / Paste| D
-    B -->|Analyze / Chat| D
-    C -->|Memory API| D
-    D --> E --> H[Gemini API]
-    D --> F
+    B -->|Unified / Legacy Analyze| D
+    C -->|View DB History| D
+    D --> E --> I[Gemini API]
+    E --> F
     D --> G
+    D --> H --> J[(SQLite DB)]
 ```
 
 ## Project Structure
 
 ```text
 GENAI-2/
-├── app.py                          # Flask app — 8 routes
+├── app.py                          # Flask app
 ├── config.py                       # Config + env loading
 ├── requirements.txt                # Dependencies
 ├── .env                            # Environment variables (not in version control)
+├── clauseclear.db                  # SQLite database (generated)
 ├── services/
-│   ├── gemini_service.py           # GenAI logic & context-engineered prompts
-│   ├── memory_service.py           # Session history management
-│   └── document_service.py         # PDF and text extraction
+│   ├── gemini_service.py           # GenAI logic, self-critique, RAG, & legacy prompts
+│   ├── benchmark_service.py        # Market standard benchmark data
+│   ├── playbooks.py                # Indian Legal Standard instructions
+│   ├── memory_service.py           # Legacy in-memory session (falling back to DB)
+│   ├── database.py                 # SQLModel models and CRUD operations
+│   └── document_service.py         # PDF, DOCX, and OCR extraction
 ├── templates/
 │   ├── base.html                   # Global layout
 │   ├── index.html                  # Landing page
 │   ├── analyze.html                # Main analysis workspace
-│   └── history.html                # Session logs viewer
+│   └── history.html                # Database visualizer
 ├── static/
-│   ├── css/style.css               # Styling
+│   ├── css/style.css               # Core styling
 │   └── js/app.js                   # Frontend interactivity & API calls
 └── uploads/                        # Temporary file upload directory
 ```

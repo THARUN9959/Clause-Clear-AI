@@ -17,6 +17,7 @@ import logging
 from google import genai
 from config import Config
 from services.benchmark_service import format_benchmark_for_prompt
+from services.playbooks import PLAYBOOKS, DEFAULT_STANDARD
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ ABSOLUTE RULES:
 
 _UNIFIED_TEMPLATE = BASE_SYSTEM_PROMPT + """
 {benchmark_context}
+__PLAYBOOK_INSTRUCTION__
 
 {historical_context}
 
@@ -76,6 +78,7 @@ Analyze the contract below. Return this EXACT JSON schema (all fields required):
       "clause": "<clause name>",
       "severity": "<HIGH|MEDIUM|LOW>",
       "explanation": "<plain English explanation WITH explicit market benchmark comparison>",
+      "standard_justification": "<cite the exact Indian statute and section that makes this HIGH_RISK — empty string for LOW/MEDIUM>",
       "suggested_redline": "<one or two sentence proposed rewrite>"
     }}
   ],
@@ -174,6 +177,7 @@ Check for:
 2. Any critical obligations that were missed
 3. Any health_score that seems too high or too low given the risks found
 4. Any suggested_redlines that are impractical
+5. Any standard_justification that is vague, missing, or does not cite a specific Indian statute section — if so, add or correct it.
 
 Return the corrected, finalized JSON in the EXACT same schema as the input analysis.
 If the analysis is accurate, return it unchanged. Return ONLY the JSON object, no other text.
@@ -398,7 +402,7 @@ FEATURE_PROMPTS = {
     "entities": ENTITY_EXTRACTION_PROMPT,
     "compare": CONTRACT_COMPARE_PROMPT,
     "multilingual": MULTILINGUAL_PROMPT,
-    "highlight": """
+    "highlight": """__PLAYBOOK_INSTRUCTION__
 You are a senior legal risk analyst. Read the contract and classify every distinct clause or sentence into exactly ONE of these 4 tiers:
 
 - HIGH_RISK  : Severely one-sided, potentially illegal, or creates major liability (e.g. unlimited liability, unilateral termination with no notice, automatic renewal traps, IP ownership grabs, non-compete with no time limit)
@@ -414,6 +418,7 @@ Return ONLY valid JSON — no markdown, no text outside the JSON:
       "text": "<exact clause or sentence from contract>",
       "classification": "HIGH_RISK|RISK|NEUTRAL|POSITIVE",
       "reason": "<one sentence explaining why>",
+      "standard_justification": "<cite exact Indian statute/section if HIGH_RISK>",
       "negotiation_tip": "<one sentence actionable tip — only for HIGH_RISK and RISK, empty string otherwise>"
     }
   ],
@@ -570,6 +575,7 @@ def unified_analyze(
     past_embeddings: list = None,
     session_id: str = "",
     filename: str = "",
+    evaluation_standard: str = DEFAULT_STANDARD,
 ) -> dict:
     """
     Single unified Gemini call: classify + analyze + obligations + health score.
@@ -614,6 +620,9 @@ def unified_analyze(
         memory_block=memory_block,
         contract_text=contract_text[:15000],
     )
+
+    playbook_text = PLAYBOOKS.get(evaluation_standard, PLAYBOOKS[DEFAULT_STANDARD])
+    prompt = prompt.replace("__PLAYBOOK_INSTRUCTION__", playbook_text)
 
     # Step 4: Primary analysis call
     logger.info("Running primary analysis call for session=%s", session_id)
@@ -661,7 +670,7 @@ def unified_analyze(
 # LEGACY FEATURE ANALYZE (retained for summarize/translate/etc)
 # ═══════════════════════════════════════════════════════════════
 
-def analyze_contract(feature, contract_text, memory_turns=None, extra_context=""):
+def analyze_contract(feature, contract_text, memory_turns=None, extra_context="", evaluation_standard=DEFAULT_STANDARD):
     """Run a legacy feature-specific analysis."""
     if feature not in FEATURE_PROMPTS:
         return {"error": f"Unknown feature: {feature}"}
@@ -678,6 +687,7 @@ def analyze_contract(feature, contract_text, memory_turns=None, extra_context=""
               .replace("{memory_block}", memory_block)
               .replace("{contract_text}", contract_text[:15000])
               .replace("{extra_context}", (extra_context or "")[:8000]))
+    prompt = prompt.replace("__PLAYBOOK_INSTRUCTION__", PLAYBOOKS.get(evaluation_standard, PLAYBOOKS[DEFAULT_STANDARD]))
     return _call_gemini(prompt)
 
 

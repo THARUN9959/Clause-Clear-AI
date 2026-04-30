@@ -278,12 +278,18 @@ def api_analyze():
     # Fetch past embeddings for RAG
     past_embeddings = get_all_embeddings(g.db, _sid())
 
+    from services.playbooks import PLAYBOOKS, DEFAULT_STANDARD
+    evaluation_standard = data.get("evaluation_standard", DEFAULT_STANDARD)
+    if evaluation_standard not in PLAYBOOKS:
+        evaluation_standard = DEFAULT_STANDARD
+
     result = unified_analyze(
         contract_text=contract_text,
         memory_turns=mem.get_turns(),
         past_embeddings=past_embeddings,
         session_id=_sid(),
         filename=mem.get_contract_name() or "Pasted Text",
+        evaluation_standard=evaluation_standard,
     )
 
     if "error" in result:
@@ -340,7 +346,12 @@ def api_analyze_feature():
     if not contract_text:
         return jsonify({"error": "No contract text available."}), 400
 
-    result = analyze_contract(feature, contract_text, mem.get_turns(), extra_context)
+    from services.playbooks import PLAYBOOKS, DEFAULT_STANDARD
+    evaluation_standard = data.get("evaluation_standard", DEFAULT_STANDARD)
+    if evaluation_standard not in PLAYBOOKS:
+        evaluation_standard = DEFAULT_STANDARD
+
+    result = analyze_contract(feature, contract_text, mem.get_turns(), extra_context, evaluation_standard)
 
     if "error" not in result:
         feature_label = FEATURE_LABELS.get(feature, feature)

@@ -158,11 +158,16 @@ function renderRisks(risks) {
         const clause = DOMPurify.sanitize(risk.clause || 'Unknown Clause');
         const explanation = DOMPurify.sanitize(risk.explanation || '');
         const redline = DOMPurify.sanitize(risk.suggested_redline || '');
+        const sj = risk.standard_justification ? DOMPurify.sanitize(risk.standard_justification) : '';
         return `
         <div class="risk-card risk-card--${sev.toLowerCase()}">
             <span class="sev-pill sev-${sev.toLowerCase()}">${sev}</span>
             <h4 class="risk-clause">${clause}</h4>
             <p class="risk-explanation">${explanation}</p>
+            ${sj ? `<div class="standard-justification">
+                <span class="sj-label">⚖️ Legal Standard:</span>
+                <span class="sj-text">${sj}</span>
+            </div>` : ''}
             ${redline ? `
             <div class="redline-section">
                 <button class="redline-toggle" onclick="toggleRedline(this)" aria-expanded="false">
@@ -354,6 +359,7 @@ function renderHighlightHTML(r) {
         const icon   = icons[c.classification] || '➖';
         const tip    = c.negotiation_tip ? DOMPurify.sanitize(c.negotiation_tip) : '';
         const tipId  = `hl-tip-${i}`;
+        const sj     = c.standard_justification ? DOMPurify.sanitize(c.standard_justification) : '';
 
         return `<div class="hl-clause hl-clause--${cls}${isHigh ? ' hl-clause--high-risk-card' : ''}">
             <div class="hl-clause-header">
@@ -361,6 +367,10 @@ function renderHighlightHTML(r) {
             </div>
             <p class="hl-text">${DOMPurify.sanitize(c.text || '')}</p>
             <p class="hl-reason">${DOMPurify.sanitize(c.reason || '')}</p>
+            ${sj ? `<div class="standard-justification">
+                <span class="sj-label">⚖️ Legal Standard:</span>
+                <span class="sj-text">${sj}</span>
+            </div>` : ''}
             ${tip ? `<div class="hl-tip-row">
                 <p class="hl-tip" id="${tipId}">💡 ${tip}</p>
                 <button class="copy-btn" style="margin-top:4px;" onclick="navigator.clipboard.writeText(document.getElementById('${tipId}').textContent.replace('💡 ',''));showToast('Tip copied!','success')">📋 Copy Tip</button>
@@ -377,7 +387,7 @@ async function runUnifiedAnalysis(contractText) {
     try {
         const resp = await apiFetch('/api/analyze', {
             method: 'POST',
-            body: JSON.stringify({ contract_text: contractText }),
+            body: JSON.stringify({ contract_text: contractText, evaluation_standard: document.getElementById('legal-standard')?.value || 'general_commercial' }),
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
@@ -397,7 +407,7 @@ async function runFeatureAnalysis(feature, contractText, extraContext = '', tabI
     try {
         const resp = await apiFetch('/api/analyze/feature', {
             method: 'POST',
-            body: JSON.stringify({ feature, contract_text: contractText, extra_context: extraContext }),
+            body: JSON.stringify({ feature, contract_text: contractText, extra_context: extraContext, evaluation_standard: document.getElementById('legal-standard')?.value || 'general_commercial' }),
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
