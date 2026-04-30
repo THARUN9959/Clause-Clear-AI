@@ -28,7 +28,7 @@ class _ContractPDF(FPDF):
         self.set_text_color(255, 255, 255)
         self.rect(0, 0, 210, 14, "F")
         self.set_y(3)
-        self.cell(0, 8, "ClauseClear AI  —  Contract Analysis Report", align="C")
+        self.cell(0, 8, "ClauseClear AI  -  Contract Analysis Report", align="C")
         self.set_text_color(0, 0, 0)
         self.ln(10)
 
@@ -188,6 +188,15 @@ def generate_pdf(analysis_row) -> bytes:
                 pdf.set_text_color(80, 80, 160)
                 pdf.cell(67, 6, "", border=0)
                 pdf.multi_cell(123, 6, f"Suggested: {redline[:150]}")
+                pdf.set_text_color(50, 50, 50)
+
+            # Legal Standard
+            sj = _safe_str(risk.get("standard_justification", ""))
+            if sj and sj != "N/A":
+                pdf.set_font("Helvetica", "I", 8)
+                pdf.set_text_color(22, 163, 74)
+                pdf.cell(67, 6, "", border=0)
+                pdf.multi_cell(123, 6, f"Legal Standard: {sj[:200]}")
                 pdf.set_text_color(50, 50, 50)
 
         pdf.ln(6)
