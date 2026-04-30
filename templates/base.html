@@ -38,6 +38,7 @@
             <div class="nav-links" id="nav-links">
                 <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}" id="nav-home">Home</a>
                 <a href="{{ url_for('analyze') }}" class="nav-link {% if request.endpoint == 'analyze' %}active{% endif %}" id="nav-analyze">Analyze</a>
+                <a href="{{ url_for('tools') }}" class="nav-link nav-link--tools {% if request.endpoint == 'tools' %}active{% endif %}" id="nav-tools">🛠️ Tools</a>
                 <a href="{{ url_for('history') }}" class="nav-link {% if request.endpoint == 'history' %}active{% endif %}" id="nav-history">History</a>
             </div>
             <button class="theme-toggle-btn" id="theme-toggle-btn" aria-label="Toggle light/dark theme" title="Toggle theme">☀️</button>

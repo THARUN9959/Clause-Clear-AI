@@ -398,17 +398,48 @@ FEATURE_PROMPTS = {
     "entities": ENTITY_EXTRACTION_PROMPT,
     "compare": CONTRACT_COMPARE_PROMPT,
     "multilingual": MULTILINGUAL_PROMPT,
+    "highlight": """
+You are a senior legal risk analyst. Read the contract and classify every distinct clause or sentence into exactly ONE of these 4 tiers:
+
+- HIGH_RISK  : Severely one-sided, potentially illegal, or creates major liability (e.g. unlimited liability, unilateral termination with no notice, automatic renewal traps, IP ownership grabs, non-compete with no time limit)
+- RISK       : Moderately unfavorable or worth negotiating (e.g. short notice periods, broad indemnification, penalty clauses)
+- NEUTRAL    : Standard boilerplate with no significant advantage to either party
+- POSITIVE   : Explicitly protects or benefits the reader (e.g. liability caps, termination for convenience, dispute resolution)
+
+Return ONLY valid JSON — no markdown, no text outside the JSON:
+{
+  "quick_summary": "<one sentence overall risk assessment>",
+  "highlighted_clauses": [
+    {
+      "text": "<exact clause or sentence from contract>",
+      "classification": "HIGH_RISK|RISK|NEUTRAL|POSITIVE",
+      "reason": "<one sentence explaining why>",
+      "negotiation_tip": "<one sentence actionable tip — only for HIGH_RISK and RISK, empty string otherwise>"
+    }
+  ],
+  "high_risk_count": <int>,
+  "risk_count": <int>,
+  "neutral_count": <int>,
+  "positive_count": <int>
+}
+
+CONTRACT:
+{contract_text}
+""",
 }
 
 FEATURE_LABELS = {
     "unified": "Full Contract Analysis",
-    "summarize": "Clause-Level Summarization",
-    "translate": "Plain Language Translation",
-    "risks": "Risk Highlight Generation",
-    "tags": "Structured Clause Tagging",
-    "entities": "Key Entity Extraction",
-    "compare": "Contract Comparison",
-    "multilingual": "Multilingual Translation",
+    "summarize": "Clause Summarization",
+    "translate": "Plain Language",
+    "summary_plain": "Summary & Plain Language",
+    "risks": "Risk Highlight",
+    "tags": "Tag Clauses",
+    "highlight": "HIGH_RISK Clause Highlighter",
+    "entities": "Extract Entities",
+    "compare": "Compare Contracts",
+    "multilingual": "Translate Language",
+    "checklist": "Contract Checklist",
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -662,3 +693,59 @@ def chat_followup(user_question, contract_text, memory_turns=None):
               .replace("{contract_text}", (contract_text or "No contract uploaded yet.")[:15000])
               .replace("{user_question}", user_question))
     return _call_gemini(prompt)
+
+
+# ═══════════════════════════════════════════════════════════════
+# CONTRACT CHECKLIST (Phase — New Feature)
+# ═══════════════════════════════════════════════════════════════
+
+_CHECKLIST_PROMPT = """You are a contract compliance expert. Analyze the contract text below and check for the presence of 10 essential legal clauses.
+
+Return ONLY a valid JSON object in this exact format — no markdown, no text outside JSON:
+{
+  "score": <integer 0-10>,
+  "overall_summary": "<one sentence overall assessment>",
+  "checklist": [
+    {
+      "name": "Governing Law / Jurisdiction",
+      "present": <true|false>,
+      "status": "<present|missing|partial>",
+      "importance": "HIGH",
+      "detail": "<what you found or what is missing>",
+      "recommendation": "<actionable fix if missing, else empty string>"
+    }
+  ]
+}
+
+Check EXACTLY these 10 items in this order:
+1. Governing Law / Jurisdiction
+2. Termination Clause
+3. Confidentiality / NDA
+4. Limitation of Liability
+5. Indemnification
+6. Dispute Resolution / Arbitration
+7. Payment Terms
+8. Intellectual Property Rights
+9. Force Majeure
+10. Non-Compete / Non-Solicitation
+
+CONTRACT TEXT:
+{contract_text}
+"""
+
+
+def run_checklist(contract_text: str) -> dict:
+    """Run a 10-point contract compliance checklist."""
+    if not contract_text or not contract_text.strip():
+        return {"error": "No contract text provided."}
+    prompt = _CHECKLIST_PROMPT.replace("{contract_text}", contract_text[:15000])
+    result = _call_gemini(prompt)
+    if "error" in result:
+        return result
+    # Ensure score is consistent with checklist
+    if "checklist" in result:
+        passed = sum(1 for i in result["checklist"] if i.get("present") is True or i.get("status") == "present")
+        result["score"] = passed
+        result.setdefault("items", result["checklist"])
+    return result
+

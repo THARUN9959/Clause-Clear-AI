@@ -1,0 +1,575 @@
+{% extends "base.html" %}
+{% block title %}Advanced Tools — ClauseClear AI{% endblock %}
+
+{% block content %}
+<div class="tools-page" id="tools-page">
+
+    <!-- Page Header -->
+    <div class="tools-hero">
+        <div class="tools-hero-inner">
+            <div class="tools-hero-badge">🛠️ Advanced Tools</div>
+            <h1 class="tools-hero-title">Contract <span class="gradient-text">Power Tools</span></h1>
+            <p class="tools-hero-sub">Purpose-built tools for deep contract work — compare versions, extract entities, translate, and check compliance.</p>
+        </div>
+    </div>
+
+    <!-- Tool Navigation Tabs -->
+    <div class="tool-nav" id="tool-nav">
+        <button class="tool-nav-btn active" data-tool="compare" id="tnav-compare">
+            <span>🔀</span> Compare Contracts
+        </button>
+        <button class="tool-nav-btn" data-tool="entities" id="tnav-entities">
+            <span>🔍</span> Extract Entities
+        </button>
+        <button class="tool-nav-btn" data-tool="translate" id="tnav-translate">
+            <span>🌐</span> Translate
+        </button>
+        <button class="tool-nav-btn" data-tool="checklist" id="tnav-checklist">
+            <span>✅</span> Contract Checklist
+        </button>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- TOOL 1: Compare Contracts                             -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="tool-section active" id="tool-compare">
+        <div class="tool-header">
+            <div class="tool-icon-wrap">🔀</div>
+            <div>
+                <h2 class="tool-title">Compare Contracts</h2>
+                <p class="tool-desc">Paste two versions of a contract to get a detailed side-by-side redline analysis — what changed, what's missing, and negotiation recommendations.</p>
+            </div>
+        </div>
+
+        <div class="compare-grid">
+            <div class="compare-col">
+                <label class="compare-label">Version A <span class="compare-label-sub">(Original)</span></label>
+                <textarea id="compare-text-a" class="tool-textarea" rows="16"
+                    placeholder="Paste the original contract text here..."></textarea>
+            </div>
+            <div class="compare-col">
+                <label class="compare-label">Version B <span class="compare-label-sub">(Revised)</span></label>
+                <textarea id="compare-text-b" class="tool-textarea" rows="16"
+                    placeholder="Paste the revised/counterpart contract text here..."></textarea>
+            </div>
+        </div>
+
+        <div class="tool-action-row">
+            <button class="btn btn-primary tool-run-btn" id="btn-compare-run">
+                <span>🔀</span> Compare Contracts
+            </button>
+            <span class="tool-run-note">Analysis takes 15–30 seconds</span>
+        </div>
+
+        <!-- Compare Loading -->
+        <div class="tool-loading" id="compare-loading" style="display:none;">
+            <div class="loading-spinner-ring"></div>
+            <span>Comparing contracts...</span>
+        </div>
+
+        <!-- Compare Results -->
+        <div class="tool-results" id="compare-results" style="display:none;">
+            <h3 class="section-heading">🔀 Comparison Report</h3>
+            <div id="compare-results-content"></div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- TOOL 2: Extract Entities                              -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="tool-section" id="tool-entities" style="display:none;">
+        <div class="tool-header">
+            <div class="tool-icon-wrap">🔍</div>
+            <div>
+                <h2 class="tool-title">Extract Entities</h2>
+                <p class="tool-desc">Identify all key parties, dates, monetary values, jurisdiction clauses, termination triggers, and legal obligations in one structured view.</p>
+            </div>
+        </div>
+
+        <div class="tool-single-input">
+            <label class="compare-label">Contract Text</label>
+            <textarea id="entities-text" class="tool-textarea" rows="14"
+                placeholder="Paste your contract text here..."></textarea>
+        </div>
+
+        <div class="tool-action-row">
+            <button class="btn btn-primary tool-run-btn" id="btn-entities-run">
+                <span>🔍</span> Extract All Entities
+            </button>
+        </div>
+
+        <div class="tool-loading" id="entities-loading" style="display:none;">
+            <div class="loading-spinner-ring"></div>
+            <span>Extracting entities...</span>
+        </div>
+
+        <div class="tool-results" id="entities-results" style="display:none;">
+            <h3 class="section-heading">🔍 Extracted Entities</h3>
+
+            <!-- Parties -->
+            <div class="entity-result-section" id="er-parties-section" style="display:none;">
+                <h4 class="er-heading">👥 Parties</h4>
+                <div class="er-party-cards" id="er-parties"></div>
+            </div>
+
+            <!-- Key Dates -->
+            <div class="entity-result-section" id="er-dates-section" style="display:none;">
+                <h4 class="er-heading">📅 Key Dates &amp; Deadlines</h4>
+                <div class="er-timeline" id="er-dates"></div>
+            </div>
+
+            <!-- Monetary Values -->
+            <div class="entity-result-section" id="er-money-section" style="display:none;">
+                <h4 class="er-heading">💰 Monetary Values</h4>
+                <div class="er-money-grid" id="er-money"></div>
+            </div>
+
+            <!-- Clauses Table -->
+            <div class="entity-result-section" id="er-clauses-section" style="display:none;">
+                <h4 class="er-heading">📑 Identified Clauses</h4>
+                <table class="obligations-table" id="er-clauses-table">
+                    <thead>
+                        <tr><th>Clause</th><th>Section</th><th>Summary</th></tr>
+                    </thead>
+                    <tbody id="er-clauses-body"></tbody>
+                </table>
+            </div>
+
+            <!-- Raw JSON fallback -->
+            <div id="er-raw" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- TOOL 3: Translate Contract                             -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="tool-section" id="tool-translate" style="display:none;">
+        <div class="tool-header">
+            <div class="tool-icon-wrap">🌐</div>
+            <div>
+                <h2 class="tool-title">Translate &amp; Simplify</h2>
+                <p class="tool-desc">Convert dense legal language into plain English or translate the entire contract into another language — clause by clause.</p>
+            </div>
+        </div>
+
+        <div class="translate-options">
+            <div class="translate-mode-toggle">
+                <button class="tmode-btn active" data-mode="plain" id="tmode-plain">✏️ Plain Language</button>
+                <button class="tmode-btn" data-mode="language" id="tmode-language">🌐 Translate Language</button>
+            </div>
+            <div class="lang-picker-wrap" id="lang-picker-wrap" style="display:none;">
+                <label class="compare-label" for="lang-select">Target Language</label>
+                <select id="lang-select" class="lang-select">
+                    <option value="Spanish">🇪🇸 Spanish</option>
+                    <option value="French">🇫🇷 French</option>
+                    <option value="German">🇩🇪 German</option>
+                    <option value="Portuguese">🇧🇷 Portuguese</option>
+                    <option value="Italian">🇮🇹 Italian</option>
+                    <option value="Arabic">🇸🇦 Arabic</option>
+                    <option value="Hindi">🇮🇳 Hindi</option>
+                    <option value="Chinese (Simplified)">🇨🇳 Chinese (Simplified)</option>
+                    <option value="Japanese">🇯🇵 Japanese</option>
+                    <option value="Korean">🇰🇷 Korean</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="tool-single-input">
+            <label class="compare-label">Contract Text</label>
+            <textarea id="translate-text" class="tool-textarea" rows="14"
+                placeholder="Paste your contract text here..."></textarea>
+        </div>
+
+        <div class="tool-action-row">
+            <button class="btn btn-primary tool-run-btn" id="btn-translate-run">
+                <span>🌐</span> Translate Now
+            </button>
+        </div>
+
+        <div class="tool-loading" id="translate-loading" style="display:none;">
+            <div class="loading-spinner-ring"></div>
+            <span id="translate-loading-text">Converting to plain language...</span>
+        </div>
+
+        <div class="tool-results" id="translate-results" style="display:none;">
+            <div class="translate-results-header">
+                <h3 class="section-heading" id="translate-results-heading">✏️ Plain Language Version</h3>
+                <button class="copy-btn" id="translate-copy-btn">📋 Copy All</button>
+            </div>
+            <div id="translate-results-content" class="translate-output"></div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- TOOL 4: Contract Checklist                            -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="tool-section" id="tool-checklist" style="display:none;">
+        <div class="tool-header">
+            <div class="tool-icon-wrap">✅</div>
+            <div>
+                <h2 class="tool-title">Contract Checklist</h2>
+                <p class="tool-desc">Instantly score your contract against 10 essential legal clauses every professional contract should contain. Spot missing protections before signing.</p>
+            </div>
+        </div>
+
+        <!-- What's checked preview -->
+        <div class="checklist-preview">
+            <p class="cp-label">Checks for:</p>
+            <div class="cp-chips">
+                <span class="cp-chip">Governing Law</span>
+                <span class="cp-chip">Termination</span>
+                <span class="cp-chip">Confidentiality</span>
+                <span class="cp-chip">Liability Cap</span>
+                <span class="cp-chip">Indemnification</span>
+                <span class="cp-chip">Dispute Resolution</span>
+                <span class="cp-chip">Payment Terms</span>
+                <span class="cp-chip">IP Ownership</span>
+                <span class="cp-chip">Force Majeure</span>
+                <span class="cp-chip">Non-Compete</span>
+            </div>
+        </div>
+
+        <div class="tool-single-input">
+            <label class="compare-label">Contract Text</label>
+            <textarea id="checklist-text" class="tool-textarea" rows="14"
+                placeholder="Paste your contract text here..."></textarea>
+        </div>
+
+        <div class="tool-action-row">
+            <button class="btn btn-primary tool-run-btn" id="btn-checklist-run">
+                <span>✅</span> Run Checklist
+            </button>
+        </div>
+
+        <div class="tool-loading" id="checklist-loading" style="display:none;">
+            <div class="loading-spinner-ring"></div>
+            <span>Scoring contract clauses...</span>
+        </div>
+
+        <div class="tool-results" id="checklist-results" style="display:none;">
+            <!-- Score summary -->
+            <div class="checklist-score-row">
+                <div class="checklist-score-circle" id="checklist-score-circle">
+                    <span class="cs-num" id="checklist-score-num">—</span>
+                    <span class="cs-denom">/10</span>
+                </div>
+                <div class="checklist-score-info">
+                    <h3 id="checklist-score-label">Contract Checklist Score</h3>
+                    <p id="checklist-score-desc" class="tool-desc"></p>
+                </div>
+            </div>
+            <!-- Items -->
+            <div class="checklist-items" id="checklist-items"></div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    initToolsPage();
+});
+
+function initToolsPage() {
+    // Tool nav switching
+    document.querySelectorAll('.tool-nav-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tool = btn.dataset.tool;
+            document.querySelectorAll('.tool-nav-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tool-section').forEach(s => s.style.display = 'none');
+            btn.classList.add('active');
+            const section = document.getElementById('tool-' + tool);
+            if (section) section.style.display = 'block';
+        });
+    });
+
+    // ── Compare ──────────────────────────────────────────
+    document.getElementById('btn-compare-run')?.addEventListener('click', async () => {
+        const textA = document.getElementById('compare-text-a')?.value.trim();
+        const textB = document.getElementById('compare-text-b')?.value.trim();
+        if (!textA || !textB) { showToast('Please paste both contract versions.', 'error'); return; }
+        showToolLoading('compare');
+        try {
+            const resp = await apiFetch('/api/analyze/feature', {
+                method: 'POST',
+                body: JSON.stringify({ feature: 'compare', contract_text: textA, extra_context: textB })
+            });
+            const data = await resp.json();
+            hideToolLoading('compare');
+            renderCompareResult(data.result || data);
+        } catch(e) { hideToolLoading('compare'); showToast('Compare failed. Please try again.', 'error'); }
+    });
+
+    // ── Extract Entities ──────────────────────────────────
+    document.getElementById('btn-entities-run')?.addEventListener('click', async () => {
+        const text = document.getElementById('entities-text')?.value.trim();
+        if (!text) { showToast('Please paste a contract first.', 'error'); return; }
+        showToolLoading('entities');
+        try {
+            const resp = await apiFetch('/api/analyze/feature', {
+                method: 'POST',
+                body: JSON.stringify({ feature: 'entities', contract_text: text })
+            });
+            const data = await resp.json();
+            hideToolLoading('entities');
+            renderEntitiesResult(data.result || data);
+        } catch(e) { hideToolLoading('entities'); showToast('Entity extraction failed.', 'error'); }
+    });
+
+    // ── Translate mode toggle ─────────────────────────────
+    document.querySelectorAll('.tmode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tmode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const isLang = btn.dataset.mode === 'language';
+            const picker = document.getElementById('lang-picker-wrap');
+            if (picker) picker.style.display = isLang ? 'block' : 'none';
+            const runBtn = document.getElementById('btn-translate-run');
+            if (runBtn) runBtn.querySelector('span').textContent = isLang ? '🌐' : '✏️';
+        });
+    });
+
+    // ── Translate run ─────────────────────────────────────
+    document.getElementById('btn-translate-run')?.addEventListener('click', async () => {
+        const text = document.getElementById('translate-text')?.value.trim();
+        if (!text) { showToast('Please paste a contract first.', 'error'); return; }
+        const mode = document.querySelector('.tmode-btn.active')?.dataset.mode || 'plain';
+        const lang = document.getElementById('lang-select')?.value || '';
+        const feature = mode === 'language' ? 'multilingual' : 'translate';
+        const extra = mode === 'language' ? lang : '';
+        const loadingText = document.getElementById('translate-loading-text');
+        if (loadingText) loadingText.textContent = mode === 'language' ? `Translating to ${lang}...` : 'Converting to plain language...';
+        showToolLoading('translate');
+        try {
+            const resp = await apiFetch('/api/analyze/feature', {
+                method: 'POST',
+                body: JSON.stringify({ feature, contract_text: text, extra_context: extra })
+            });
+            const data = await resp.json();
+            hideToolLoading('translate');
+            renderTranslateResult(data.result || data, mode, lang);
+        } catch(e) { hideToolLoading('translate'); showToast('Translation failed.', 'error'); }
+    });
+
+    // ── Checklist run ─────────────────────────────────────
+    document.getElementById('btn-checklist-run')?.addEventListener('click', async () => {
+        const text = document.getElementById('checklist-text')?.value.trim();
+        if (!text) { showToast('Please paste a contract first.', 'error'); return; }
+        showToolLoading('checklist');
+        try {
+            const resp = await apiFetch('/api/tools/checklist', {
+                method: 'POST',
+                body: JSON.stringify({ contract_text: text })
+            });
+            const data = await resp.json();
+            hideToolLoading('checklist');
+            renderChecklistResult(data);
+        } catch(e) { hideToolLoading('checklist'); showToast('Checklist failed.', 'error'); }
+    });
+
+    // ── Copy translate ────────────────────────────────────
+    document.getElementById('translate-copy-btn')?.addEventListener('click', () => {
+        const el = document.getElementById('translate-results-content');
+        if (el) navigator.clipboard.writeText(el.innerText).then(() => showToast('Copied!', 'success'));
+    });
+}
+
+// ── Tool loading helpers ──────────────────────────────────────────────────────
+function showToolLoading(tool) {
+    document.getElementById(tool + '-loading').style.display = 'flex';
+    document.getElementById(tool + '-results').style.display = 'none';
+}
+function hideToolLoading(tool) {
+    document.getElementById(tool + '-loading').style.display = 'none';
+}
+
+// ── Compare result renderer ───────────────────────────────────────────────────
+function renderCompareResult(r) {
+    const el = document.getElementById('compare-results-content');
+    if (!el) return;
+
+    const summary = DOMPurify.sanitize(r.quick_summary || r.comparison_summary || '');
+    const changes = r.changes || r.key_differences || [];
+    const recommendations = r.recommendations || [];
+
+    let html = '';
+    if (summary) html += `<p class="quick-summary">${summary}</p>`;
+
+    if (changes.length) {
+        html += `<h4 class="er-heading">📝 Key Differences (${changes.length})</h4>`;
+        html += changes.map(c => {
+            const type = (c.type || c.change_type || 'changed').toLowerCase();
+            const icons = { added: '➕', removed: '➖', changed: '🔄', missing: '⚠️' };
+            const icon = icons[type] || '🔄';
+            return `<div class="compare-change-card compare-change--${type}">
+                <div class="compare-change-header">
+                    <span class="compare-change-icon">${icon}</span>
+                    <strong>${DOMPurify.sanitize(c.clause || c.section || 'Clause')}</strong>
+                    <span class="compare-change-type">${type.toUpperCase()}</span>
+                </div>
+                ${c.original ? `<p class="compare-ver"><span class="cver-label">A:</span> ${DOMPurify.sanitize(c.original)}</p>` : ''}
+                ${c.revised ? `<p class="compare-ver"><span class="cver-label">B:</span> ${DOMPurify.sanitize(c.revised)}</p>` : ''}
+                ${c.impact ? `<p class="compare-impact">⚠️ ${DOMPurify.sanitize(c.impact)}</p>` : ''}
+            </div>`;
+        }).join('');
+    }
+
+    if (recommendations.length) {
+        html += `<h4 class="er-heading" style="margin-top:1.5rem;">💡 Negotiation Recommendations</h4>`;
+        html += `<ul class="tool-rec-list">${recommendations.map(rec => `<li>${DOMPurify.sanitize(typeof rec === 'string' ? rec : rec.recommendation || '')}</li>`).join('')}</ul>`;
+    }
+
+    if (!html) html = `<pre class="json-dump">${DOMPurify.sanitize(JSON.stringify(r, null, 2))}</pre>`;
+    el.innerHTML = html;
+    document.getElementById('compare-results').style.display = 'block';
+}
+
+// ── Entities result renderer ──────────────────────────────────────────────────
+function renderEntitiesResult(r) {
+    const parties = r.parties || r.key_entities?.parties || [];
+    const dates = r.key_dates || r.dates || [];
+    const money = r.monetary_values || r.money || [];
+    const clauses = r.clauses || r.identified_clauses || [];
+
+    // Parties
+    if (parties.length) {
+        const el = document.getElementById('er-parties');
+        if (el) {
+            el.innerHTML = parties.map(p => `
+                <div class="er-party-card">
+                    <div class="er-party-icon">👤</div>
+                    <div class="er-party-info">
+                        <div class="er-party-name">${DOMPurify.sanitize(typeof p === 'string' ? p : p.name || p)}</div>
+                        ${p.role ? `<div class="er-party-role">${DOMPurify.sanitize(p.role)}</div>` : ''}
+                    </div>
+                </div>`).join('');
+            document.getElementById('er-parties-section').style.display = 'block';
+        }
+    }
+
+    // Dates
+    if (dates.length) {
+        const el = document.getElementById('er-dates');
+        if (el) {
+            el.innerHTML = dates.map(d => `
+                <div class="er-timeline-item">
+                    <div class="er-timeline-dot"></div>
+                    <div class="er-timeline-content">
+                        <strong>${DOMPurify.sanitize(d.label || d.type || 'Date')}</strong>
+                        <span>${DOMPurify.sanitize(d.value || d.date || '')}</span>
+                    </div>
+                </div>`).join('');
+            document.getElementById('er-dates-section').style.display = 'block';
+        }
+    }
+
+    // Money
+    if (money.length) {
+        const el = document.getElementById('er-money');
+        if (el) {
+            el.innerHTML = money.map(m => `
+                <div class="er-money-card">
+                    <div class="er-money-label">${DOMPurify.sanitize(m.label || m.type || 'Amount')}</div>
+                    <div class="er-money-value">${DOMPurify.sanitize(m.value || m.amount || '')}</div>
+                </div>`).join('');
+            document.getElementById('er-money-section').style.display = 'block';
+        }
+    }
+
+    // Clauses
+    if (clauses.length) {
+        const tbody = document.getElementById('er-clauses-body');
+        if (tbody) {
+            tbody.innerHTML = clauses.map(c => `
+                <tr>
+                    <td>${DOMPurify.sanitize(c.clause || c.name || '')}</td>
+                    <td>${DOMPurify.sanitize(c.section || '')}</td>
+                    <td>${DOMPurify.sanitize(c.summary || c.description || '')}</td>
+                </tr>`).join('');
+            document.getElementById('er-clauses-section').style.display = 'block';
+        }
+    }
+
+    // Fallback if nothing structured found
+    const hasAny = parties.length || dates.length || money.length || clauses.length;
+    if (!hasAny) {
+        const raw = document.getElementById('er-raw');
+        if (raw) {
+            raw.innerHTML = `<pre class="json-dump">${DOMPurify.sanitize(JSON.stringify(r, null, 2))}</pre>`;
+            raw.style.display = 'block';
+        }
+    }
+    document.getElementById('entities-results').style.display = 'block';
+}
+
+// ── Translate result renderer ─────────────────────────────────────────────────
+function renderTranslateResult(r, mode, lang) {
+    const heading = document.getElementById('translate-results-heading');
+    const content = document.getElementById('translate-results-content');
+    if (!content) return;
+    if (heading) heading.textContent = mode === 'language' ? `🌐 ${lang} Translation` : '✏️ Plain Language Version';
+
+    const clauses = r.clauses || r.translated_clauses || r.plain_clauses || [];
+    if (clauses.length) {
+        content.innerHTML = clauses.map(c => `
+            <div class="translate-clause">
+                <div class="tc-original">${DOMPurify.sanitize(c.original_clause || c.original || '')}</div>
+                <div class="tc-arrow">↓</div>
+                <div class="tc-plain">${DOMPurify.sanitize(c.plain_language || c.translated || c.simplified || '')}</div>
+            </div>`).join('');
+    } else {
+        const text = r.plain_text || r.translated_text || r.quick_summary || JSON.stringify(r, null, 2);
+        content.innerHTML = `<p class="quick-summary">${DOMPurify.sanitize(text)}</p>`;
+    }
+    document.getElementById('translate-results').style.display = 'block';
+}
+
+// ── Checklist result renderer ─────────────────────────────────────────────────
+function renderChecklistResult(r) {
+    const items = r.checklist || r.items || [];
+    const passed = items.filter(i => i.present === true || i.status === 'present').length;
+    const total = items.length || 10;
+
+    // Score circle
+    const scoreNum = document.getElementById('checklist-score-num');
+    const circle = document.getElementById('checklist-score-circle');
+    const desc = document.getElementById('checklist-score-desc');
+    if (scoreNum) scoreNum.textContent = passed;
+    if (circle) {
+        const pct = passed / total;
+        circle.style.background = pct >= 0.8 ? '#16a34a' : pct >= 0.5 ? '#f59e0b' : '#ef4444';
+    }
+    if (desc) {
+        const label = passed >= 8 ? '✅ Well-protected contract' : passed >= 5 ? '⚠️ Some protections missing' : '❌ Significant gaps found';
+        document.getElementById('checklist-score-label').textContent = label;
+        desc.textContent = r.overall_summary || '';
+    }
+
+    // Items
+    const container = document.getElementById('checklist-items');
+    if (container && items.length) {
+        container.innerHTML = items.map(item => {
+            const present = item.present === true || item.status === 'present';
+            const warning = item.status === 'partial';
+            const icon = present ? '✅' : warning ? '⚠️' : '❌';
+            const cls = present ? 'cli-present' : warning ? 'cli-warning' : 'cli-missing';
+            const imp = (item.importance || 'MEDIUM').toUpperCase();
+            return `<div class="checklist-item ${cls}">
+                <div class="cli-icon">${icon}</div>
+                <div class="cli-body">
+                    <div class="cli-name-row">
+                        <strong class="cli-name">${DOMPurify.sanitize(item.name || item.clause)}</strong>
+                        <span class="sev-badge sev-${imp.toLowerCase()}">${imp}</span>
+                    </div>
+                    <p class="cli-detail">${DOMPurify.sanitize(item.detail || item.description || '')}</p>
+                    ${item.recommendation ? `<p class="cli-rec">💡 ${DOMPurify.sanitize(item.recommendation)}</p>` : ''}
+                </div>
+            </div>`;
+        }).join('');
+    }
+    document.getElementById('checklist-results').style.display = 'block';
+}
+</script>
+{% endblock %}

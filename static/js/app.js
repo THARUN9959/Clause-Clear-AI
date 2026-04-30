@@ -281,25 +281,94 @@ function renderUnifiedResult(data) {
 }
 
 // ─── RENDER LEGACY RESULT ──────────────────────────────────────────────────
-function renderLegacyResult(data) {
+function renderLegacyResult(data, tabId) {
     stopLoading();
     const contentEl = document.getElementById('results-content');
-    const genericEl = document.getElementById('generic-results-content');
-    if (!contentEl || !genericEl) return;
+    if (!contentEl) return;
     contentEl.style.display = 'block';
 
     const r = data.result || {};
     const label = DOMPurify.sanitize(data.feature_label || data.feature || '');
-    let html = `<div class="legacy-result"><h3 class="section-heading">${label}</h3>`;
+    const target = tabId ? document.getElementById(tabId) : document.getElementById('tab-panels-container');
+    if (!target) return;
 
-    if (r.quick_summary) {
-        html += `<p class="quick-summary">${DOMPurify.sanitize(r.quick_summary)}</p>`;
+    let html = `<div class="legacy-result">`;
+    if (!tabId) html += `<h3 class="section-heading">${label}</h3>`;
+
+    // Feature-specific renderers
+    if (r.highlighted_clauses) {
+        html += renderHighlightHTML(r);
+    } else if (r.clauses || r.quick_summary) {
+        if (r.quick_summary) html += `<p class="quick-summary">${DOMPurify.sanitize(r.quick_summary)}</p>`;
+        if (r.clauses && r.clauses.length) {
+            html += r.clauses.map(c => `
+                <div class="clause-card">
+                    <div class="clause-tag-row">
+                        ${(c.tags || []).map(t => `<span class="clause-tag">${DOMPurify.sanitize(t)}</span>`).join('')}
+                    </div>
+                    <p class="clause-text">${DOMPurify.sanitize(c.clause || c.original_clause || '')}</p>
+                    ${c.plain_language ? `<p class="clause-plain">✏️ ${DOMPurify.sanitize(c.plain_language)}</p>` : ''}
+                    ${c.summary ? `<p class="clause-plain">📋 ${DOMPurify.sanitize(c.summary)}</p>` : ''}
+                </div>`).join('');
+        }
+    } else {
+        html += `<pre class="json-dump">${DOMPurify.sanitize(JSON.stringify(r, null, 2))}</pre>`;
     }
-    html += `<pre class="json-dump">${DOMPurify.sanitize(JSON.stringify(r, null, 2))}</pre></div>`;
-    genericEl.innerHTML = html;
+    html += `</div>`;
+    target.innerHTML = html;
 
     const chatSection = document.getElementById('chat-section');
     if (chatSection) chatSection.style.display = 'block';
+}
+
+function renderHighlightHTML(r) {
+    const clauses = r.highlighted_clauses || [];
+    const hrc = r.high_risk_count || clauses.filter(c => c.classification === 'HIGH_RISK').length;
+    const rc  = r.risk_count     || clauses.filter(c => c.classification === 'RISK').length;
+    const nc  = r.neutral_count  || clauses.filter(c => c.classification === 'NEUTRAL').length;
+    const pc  = r.positive_count || clauses.filter(c => c.classification === 'POSITIVE').length;
+
+    // Summary bar
+    let html = `<div class="highlight-summary">`;
+    if (hrc > 0) html += `<span class="hl-badge hl-high-risk">🚨 HIGH RISK: ${hrc}</span>`;
+    html += `<span class="hl-badge hl-risk">⚠️ Risk: ${rc}</span>
+        <span class="hl-badge hl-neutral">➖ Neutral: ${nc}</span>
+        <span class="hl-badge hl-positive">✅ Positive: ${pc}</span>
+    </div>`;
+
+    // Overall verdict
+    if (r.quick_summary) {
+        html += `<p class="quick-summary">${DOMPurify.sanitize(r.quick_summary)}</p>`;
+    }
+
+    // Sort: HIGH_RISK first, then RISK, NEUTRAL, POSITIVE
+    const ORDER = { HIGH_RISK: 0, RISK: 1, NEUTRAL: 2, POSITIVE: 3 };
+    const sorted = [...clauses].sort((a, b) =>
+        (ORDER[a.classification] ?? 9) - (ORDER[b.classification] ?? 9)
+    );
+
+    html += sorted.map((c, i) => {
+        const cls   = (c.classification || 'NEUTRAL').toLowerCase().replace('_', '-');
+        const isHigh = c.classification === 'HIGH_RISK';
+        const icons  = { HIGH_RISK: '🚨', RISK: '⚠️', NEUTRAL: '➖', POSITIVE: '✅' };
+        const icon   = icons[c.classification] || '➖';
+        const tip    = c.negotiation_tip ? DOMPurify.sanitize(c.negotiation_tip) : '';
+        const tipId  = `hl-tip-${i}`;
+
+        return `<div class="hl-clause hl-clause--${cls}${isHigh ? ' hl-clause--high-risk-card' : ''}">
+            <div class="hl-clause-header">
+                <span class="hl-cls-badge hl-cls--${cls}">${icon} ${c.classification?.replace('_', ' ')}</span>
+            </div>
+            <p class="hl-text">${DOMPurify.sanitize(c.text || '')}</p>
+            <p class="hl-reason">${DOMPurify.sanitize(c.reason || '')}</p>
+            ${tip ? `<div class="hl-tip-row">
+                <p class="hl-tip" id="${tipId}">💡 ${tip}</p>
+                <button class="copy-btn" style="margin-top:4px;" onclick="navigator.clipboard.writeText(document.getElementById('${tipId}').textContent.replace('💡 ',''));showToast('Tip copied!','success')">📋 Copy Tip</button>
+            </div>` : ''}
+        </div>`;
+    }).join('');
+
+    return html;
 }
 
 // ─── ANALYZE (UNIFIED) ─────────────────────────────────────────────────────
@@ -322,9 +391,9 @@ async function runUnifiedAnalysis(contractText) {
     }
 }
 
-// ─── ANALYZE (LEGACY FEATURE) ──────────────────────────────────────────────
-async function runFeatureAnalysis(feature, contractText, extraContext = '') {
-    startLoading();
+// ─── ANALYZE (FEATURE — single or tabbed) ─────────────────────────────────
+async function runFeatureAnalysis(feature, contractText, extraContext = '', tabId = null) {
+    if (!tabId) startLoading();
     try {
         const resp = await apiFetch('/api/analyze/feature', {
             method: 'POST',
@@ -332,13 +401,20 @@ async function runFeatureAnalysis(feature, contractText, extraContext = '') {
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
-            showError(data.error || 'Analysis failed. Please try again.');
-            return;
+            if (tabId) {
+                const el = document.getElementById(tabId);
+                if (el) el.innerHTML = `<p class="quick-summary" style="color:var(--error)">❌ ${DOMPurify.sanitize(data.error || 'Failed')}</p>`;
+            } else {
+                showError(data.error || 'Analysis failed.');
+            }
+            return data;
         }
-        renderLegacyResult(data);
+        renderLegacyResult(data, tabId);
         updateMemoryCount();
+        return data;
     } catch (e) {
-        showError('A network error occurred.');
+        if (!tabId) showError('A network error occurred.');
+        return null;
     }
 }
 
@@ -415,30 +491,134 @@ function updateMemoryCount() {
         .catch(() => {});
 }
 
-// ─── ANALYZE PAGE INIT ─────────────────────────────────────────────────────
-function initAnalyzePage() {
-    // Feature button clicks
-    document.querySelectorAll('.feature-btn[data-feature]').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            const feature = btn.dataset.feature;
-            const contractText = document.getElementById('contract-text')?.value || '';
+// ─── MULTI-SELECT SYSTEM ───────────────────────────────────────────────────
+const _selected = new Set();
 
-            if (feature === 'unified') {
-                await runUnifiedAnalysis(contractText);
-                return;
+function initMultiSelect() {
+    document.querySelectorAll('.feature-btn[data-selectable]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const f = btn.dataset.feature;
+            if (_selected.has(f)) {
+                _selected.delete(f);
+                btn.classList.remove('fb--selected');
+            } else {
+                _selected.add(f);
+                btn.classList.add('fb--selected');
             }
-
-            let extraContext = '';
-            if (feature === 'compare') {
-                extraContext = prompt('Paste the REVISED contract text (Version B):') || '';
-                if (!extraContext.trim()) return;
-            } else if (feature === 'multilingual') {
-                extraContext = prompt('Enter target language (e.g. Spanish, French):') || '';
-                if (!extraContext.trim()) return;
-            }
-            await runFeatureAnalysis(feature, contractText, extraContext);
+            _updateRunBar();
         });
     });
+    document.getElementById('run-selected-btn')?.addEventListener('click', _runSelected);
+    document.getElementById('run-deselect-btn')?.addEventListener('click', () => {
+        _selected.clear();
+        document.querySelectorAll('.feature-btn[data-selectable]').forEach(b => b.classList.remove('fb--selected'));
+        _updateRunBar();
+    });
+}
+
+function _updateRunBar() {
+    const bar = document.getElementById('run-selected-bar');
+    const countEl = document.getElementById('run-selected-count');
+    if (!bar) return;
+    bar.style.display = _selected.size > 0 ? 'flex' : 'none';
+    if (countEl) countEl.textContent = _selected.size;
+}
+
+async function _runSelected() {
+    const contractText = document.getElementById('contract-text')?.value || '';
+    const features = Array.from(_selected);
+    if (!features.length) return;
+
+    // Build tabs
+    const tabBar = document.getElementById('results-tab-bar');
+    const panels = document.getElementById('tab-panels-container');
+    const contentEl = document.getElementById('results-content');
+    const emptyEl = document.getElementById('results-empty');
+    // Hide health/risk/obligations sections (those are for unified only)
+    ['health-section','entities-section','risks-section','obligations-section'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (contentEl) contentEl.style.display = 'block';
+    if (tabBar) { tabBar.style.display = 'flex'; tabBar.innerHTML = ''; }
+    if (panels) panels.innerHTML = '';
+
+    const LABELS = {
+        summary_plain: '📋 Summary & Plain Language',
+        tags: '🏷️ Tag Clauses',
+        highlight: '🖊️ Clause Highlighter',
+    };
+
+    features.forEach((f, i) => {
+        const tabId = `tab-panel-${f}`;
+        // Tab button
+        const tabBtn = document.createElement('button');
+        tabBtn.className = `rtab-btn${i === 0 ? ' active' : ''}`;
+        tabBtn.dataset.tab = tabId;
+        tabBtn.textContent = LABELS[f] || f;
+        tabBtn.addEventListener('click', () => {
+            document.querySelectorAll('.rtab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.rtab-panel').forEach(p => p.style.display = 'none');
+            tabBtn.classList.add('active');
+            document.getElementById(tabId).style.display = 'block';
+        });
+        if (tabBar) tabBar.appendChild(tabBtn);
+        // Panel
+        const panel = document.createElement('div');
+        panel.id = tabId;
+        panel.className = 'rtab-panel';
+        panel.style.display = i === 0 ? 'block' : 'none';
+        panel.innerHTML = `<div class="tab-loading"><div class="loading-spinner-ring" style="width:32px;height:32px;"></div><span>Running ${LABELS[f] || f}…</span></div>`;
+        if (panels) panels.appendChild(panel);
+    });
+
+    startLoading();
+    // Run sequentially
+    for (const f of features) {
+        const tabId = `tab-panel-${f}`;
+        if (f === 'summary_plain') {
+            // Run summarize + translate, combine
+            const [sumData, plainData] = await Promise.all([
+                runFeatureAnalysis('summarize', contractText, '', null),
+                runFeatureAnalysis('translate', contractText, '', null)
+            ]);
+            const panel = document.getElementById(tabId);
+            if (panel) {
+                const sr = sumData?.result || {};
+                const pr = plainData?.result || {};
+                let html = '<div class="legacy-result">';
+                if (sr.quick_summary) html += `<h4 class="er-heading">📋 Summary</h4><p class="quick-summary">${DOMPurify.sanitize(sr.quick_summary)}</p>`;
+                if (sr.clauses?.length) {
+                    html += `<h4 class="er-heading">📑 Clause Summaries</h4>`;
+                    html += sr.clauses.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.clause || '')}</p><p class="clause-plain">📋 ${DOMPurify.sanitize(c.summary || '')}</p></div>`).join('');
+                }
+                if (pr.clauses?.length) {
+                    html += `<h4 class="er-heading" style="margin-top:1.5rem;">✏️ Plain Language</h4>`;
+                    html += pr.clauses.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_clause || c.clause || '')}</p><p class="clause-plain">✏️ ${DOMPurify.sanitize(c.plain_language || '')}</p></div>`).join('');
+                }
+                html += '</div>';
+                panel.innerHTML = html;
+            }
+        } else {
+            await runFeatureAnalysis(f, contractText, '', tabId);
+        }
+    }
+    stopLoading();
+    const chatSection = document.getElementById('chat-section');
+    if (chatSection) chatSection.style.display = 'block';
+    showToast(`${features.length} analysis complete!`, 'success');
+}
+
+// ─── ANALYZE PAGE INIT ─────────────────────────────────────────────────────
+function initAnalyzePage() {
+    // Full Analysis — immediate run
+    document.getElementById('btn-unified')?.addEventListener('click', async () => {
+        const contractText = document.getElementById('contract-text')?.value || '';
+        await runUnifiedAnalysis(contractText);
+    });
+
+    initMultiSelect();
 
     // Upload zone
     const zone = document.getElementById('upload-zone');
@@ -469,14 +649,12 @@ function initAnalyzePage() {
             chatInput.value = '';
             await sendChat(msg);
         });
-        // Auto-grow textarea
         chatInput.addEventListener('input', () => {
             chatInput.style.height = 'auto';
             chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
         });
     }
 
-    // Clear memory button
     document.getElementById('clear-memory-btn')?.addEventListener('click', () => {
         apiFetch('/api/clear-memory', { method: 'POST' })
             .then(() => { updateMemoryCount(); showToast('Memory cleared.', 'success'); });

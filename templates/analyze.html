@@ -42,42 +42,47 @@
                 rows="10"></textarea>
         </div>
 
-        <!-- Analysis Buttons -->
+        <!-- Analysis Selection -->
         <div class="panel-section">
-            <label class="section-label">Choose Analysis</label>
+            <div class="choose-label-row">
+                <label class="section-label">Choose Analysis</label>
+                <span class="multiselect-hint">Select multiple → Run together</span>
+            </div>
+
             <div class="feature-buttons">
-                <!-- PRIMARY — unified full analysis -->
+                <!-- PRIMARY — always immediate run -->
                 <button class="feature-btn feature-btn--primary" data-feature="unified" id="btn-unified">
                     <span class="fb-icon">🔬</span>
                     <span class="fb-label">Full Analysis</span>
                     <span class="fb-badge">NEW</span>
                 </button>
-                <!-- Legacy features -->
-                <button class="feature-btn" data-feature="summarize" id="btn-summarize">
+
+                <!-- SELECTABLE features -->
+                <button class="feature-btn feature-btn--selectable" data-feature="summary_plain" data-selectable="true" id="btn-summary-plain">
+                    <span class="fb-check">✓</span>
                     <span class="fb-icon">📋</span>
-                    <span class="fb-label">Summarize Clauses</span>
+                    <span class="fb-label">Summary &amp; Plain Language</span>
                 </button>
-                <button class="feature-btn" data-feature="translate" id="btn-translate">
-                    <span class="fb-icon">🔤</span>
-                    <span class="fb-label">Plain Language</span>
-                </button>
-                <button class="feature-btn" data-feature="tags" id="btn-tags">
+
+                <button class="feature-btn feature-btn--selectable" data-feature="tags" data-selectable="true" id="btn-tags">
+                    <span class="fb-check">✓</span>
                     <span class="fb-icon">🏷️</span>
                     <span class="fb-label">Tag Clauses</span>
                 </button>
-                <button class="feature-btn" data-feature="entities" id="btn-entities">
-                    <span class="fb-icon">🔍</span>
-                    <span class="fb-label">Extract Entities</span>
-                </button>
-                <button class="feature-btn feature-btn--accent" data-feature="compare" id="btn-compare">
-                    <span class="fb-icon">🔀</span>
-                    <span class="fb-label">Compare Contracts</span>
-                </button>
-                <button class="feature-btn feature-btn--accent" data-feature="multilingual" id="btn-multilingual">
-                    <span class="fb-icon">🌐</span>
-                    <span class="fb-label">Translate Language</span>
+
+                <button class="feature-btn feature-btn--selectable" data-feature="highlight" data-selectable="true" id="btn-highlight">
+                    <span class="fb-check">✓</span>
+                    <span class="fb-icon">🚨</span>
+                    <span class="fb-label">HIGH_RISK Clause Highlighter</span>
+                    <span class="fb-badge fb-badge--new">NEW</span>
                 </button>
             </div>
+
+            <!-- Link to tools page -->
+            <a href="{{ url_for('tools') }}" class="tools-link-cta">
+                <span>🛠️</span>
+                <span>Compare, Entities, Translate &amp; Checklist →</span>
+            </a>
         </div>
 
         <!-- Memory badge -->
@@ -87,6 +92,18 @@
                 <span>Memory: <strong id="memory-turns">0</strong>/10 turns</span>
                 <button class="mem-clear-btn" id="clear-memory-btn" title="Clear memory">✕</button>
             </div>
+        </div>
+
+        <!-- ── Sticky Run Selected Bar ── -->
+        <div class="run-selected-bar" id="run-selected-bar" style="display:none;">
+            <div class="rsb-info">
+                <span class="rsb-count" id="run-selected-count">0</span>
+                <span class="rsb-label">feature(s) selected</span>
+            </div>
+            <button class="rsb-btn" id="run-selected-btn">
+                Run Selected ▶
+            </button>
+            <button class="rsb-clear" id="run-deselect-btn" title="Deselect all">✕</button>
         </div>
     </div>
 
@@ -101,6 +118,9 @@
                 <button class="btn btn-sm btn-export" id="export-btn" style="display:none;">📄 Download PDF</button>
             </div>
         </div>
+
+        <!-- Results Tabs (shown when multiple features run) -->
+        <div class="results-tab-bar" id="results-tab-bar" style="display:none;"></div>
 
         <!-- ── Loading overlay ───────────────────── -->
         <div class="results-loading" id="results-loading" style="display:none;">
@@ -122,13 +142,16 @@
         <div class="results-empty" id="results-empty">
             <div class="empty-icon">⚖️</div>
             <h3>Ready to Analyze</h3>
-            <p>Paste or upload a contract, then click <strong>Full Analysis</strong> to get started.</p>
+            <p>Select one or more analysis types, then click <strong>Run Selected</strong> — or click <strong>Full Analysis</strong> for everything at once.</p>
         </div>
 
         <!-- ── Results content ───────────────────── -->
         <div class="results-content" id="results-content" style="display:none;">
 
-            <!-- Health Score Gauge -->
+            <!-- Tab panels container -->
+            <div id="tab-panels-container"></div>
+
+            <!-- Health Score Gauge (Unified only) -->
             <div class="health-section" id="health-section" style="display:none;">
                 <div class="health-meter">
                     <div class="health-gauge-wrap">
@@ -155,7 +178,6 @@
                         </div>
                     </div>
                 </div>
-                <!-- Summary -->
                 <div class="summary-block" id="summary-block" style="display:none;">
                     <h3 class="section-heading">📝 Summary</h3>
                     <p class="summary-text" id="summary-text"></p>
@@ -198,9 +220,6 @@
                     </div>
                 </div>
             </div>
-
-            <!-- Generic results (for legacy features) -->
-            <div id="generic-results-content"></div>
         </div>
 
         <!-- ── Error state ────────────────────────── -->

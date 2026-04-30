@@ -168,6 +168,11 @@ def analyze():
     )
 
 
+@app.route("/tools")
+def tools():
+    return render_template("tools.html")
+
+
 @app.route("/history")
 def history():
     page = request.args.get("page", 1, type=int)
@@ -473,6 +478,31 @@ def api_memory():
 def api_clear_memory():
     _get_memory().clear()
     return jsonify({"success": True, "message": "Session memory cleared."})
+
+
+# ─── API: Tools — Checklist ──────────────────────────────────────────────────
+
+@app.route("/api/tools/checklist", methods=["POST"])
+def api_tools_checklist():
+    """Run the contract compliance checklist."""
+    from services.gemini_service import run_checklist
+    data = request.get_json() or {}
+    contract_text = data.get("contract_text", "").strip()
+
+    mem = _get_memory()
+    if not contract_text:
+        contract_text = mem.get_contract_text()
+    if not contract_text:
+        return jsonify({"error": "No contract text provided."}), 400
+
+    result = run_checklist(contract_text)
+    if "error" in result:
+        return jsonify(result), 500
+    return jsonify(result)
+
+
+if limiter:
+    api_tools_checklist = limiter.limit("10 per hour")(api_tools_checklist)
 
 
 # ─── Error handlers ───────────────────────────────────────────────────────────
