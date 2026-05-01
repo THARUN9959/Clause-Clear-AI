@@ -10,7 +10,8 @@ class Config:
     """Application configuration loaded from environment variables."""
 
     # ── API Keys ─────────────────────────────────────────────────────────────
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY", "")      # Primary
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")   # Fallback
 
     # ── Flask ─────────────────────────────────────────────────────────────────
     SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
@@ -20,8 +21,9 @@ class Config:
             "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
         )
 
-    # ── Gemini Model ──────────────────────────────────────────────────────────
-    GEMINI_MODEL = "gemini-2.5-flash-lite"
+    # ── Claude Model ──────────────────────────────────────────────────────────
+    CLAUDE_MODEL  = "claude-sonnet-4-20250514"   # Fallback model
+    GEMINI_MODEL  = "gemini-2.5-flash-lite"      # Primary model
 
     # ── File Upload ───────────────────────────────────────────────────────────
     UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")

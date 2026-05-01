@@ -1,12 +1,14 @@
 """
-ClauseClear AI — Unified Gemini Service.
+ClauseClear AI — Unified AI Service (Gemini primary, Claude fallback).
 
 Architecture:
-  - Single unified analysis call returning full structured JSON (Phase 2)
-  - Contract-type-specific prompt templates (Phase 2)
-  - Benchmark injection (Phase 3)
-  - Self-critique agent loop (Phase 15)
-  - Vanilla RAG via text-embedding-004 + cosine similarity (Phase 16)
+  - Gemini is the PRIMARY model for all analysis calls.
+  - Claude (Anthropic) is the FALLBACK — used automatically when Gemini
+    hits its daily quota, a rate-limit, or any unrecoverable error.
+  - Single unified analysis call returning full structured JSON
+  - Contract-type-specific prompt templates
+  - Benchmark injection
+  - Self-critique agent loop (disabled by default to save tokens)
   - Legacy feature prompts retained for summarize/translate/compare/multilingual
 """
 
@@ -15,21 +17,28 @@ import math
 import re
 import time
 import logging
+import anthropic
 from google import genai
+
 from config import Config
 from services.benchmark_service import format_benchmark_for_prompt
 from services.playbooks import PLAYBOOKS, DEFAULT_STANDARD
 
 logger = logging.getLogger(__name__)
 
-client = genai.Client(api_key=Config.GEMINI_API_KEY)
+# ── Client factories ──────────────────────────────────────────
+def _get_gemini_client():
+    return genai.Client(api_key=Config.GEMINI_API_KEY)
+
+def _get_claude_client():
+    return anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
 
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 2
 
-# Set to False to disable the self-critique step and save 1 API call per analysis.
-# Recommended: False on free-tier (20 req/day), True on paid tier.
+# Set to True on paid plan to enable self-critique for higher accuracy.
 ENABLE_SELF_CRITIQUE = False
+
 
 # ═══════════════════════════════════════════════════════════════
 # CONTRACT TYPE DETECTION
@@ -40,7 +49,7 @@ CONTRACT_TYPES = ["NDA", "EMPLOYMENT", "SAAS_TOS", "FREELANCE", "RENTAL", "LOAN"
 CLASSIFY_ONLY_PROMPT = """You are a contract classifier. Read the contract text below and return ONLY a single JSON object:
 {"contract_type": "<TYPE>"}
 Where <TYPE> is exactly one of: NDA, EMPLOYMENT, SAAS_TOS, FREELANCE, RENTAL, LOAN, PARTNERSHIP, UNKNOWN
-No other output.
+No other output. No markdown. No explanation.
 
 CONTRACT TEXT:
 {contract_text}
@@ -60,8 +69,9 @@ ABSOLUTE RULES:
 5. All risk explanations MUST reference the market benchmark standards provided.
 """
 
+
 # ═══════════════════════════════════════════════════════════════
-# UNIFIED ANALYSIS PROMPT TEMPLATES (per contract type)
+# UNIFIED ANALYSIS PROMPT TEMPLATE
 # ═══════════════════════════════════════════════════════════════
 
 _UNIFIED_TEMPLATE = BASE_SYSTEM_PROMPT + """
@@ -112,67 +122,46 @@ Health score guide: 90-100=A (excellent), 80-89=B (good), 70-79=C (acceptable), 
 {contract_text}
 """
 
-_NDA_ADDENDUM = """
-NDA FOCUS AREAS: Analyze mutual vs one-sided scope, IP assignment breadth, residuals clauses,
-duration against 2-3 year market standard, jurisdiction, and definition of "Confidential Information".
-"""
 
-_EMPLOYMENT_ADDENDUM = """
-EMPLOYMENT FOCUS AREAS: At-will provisions, non-compete duration+geography vs 6-12 month standard,
+# Contract-type-specific addenda
+_NDA_ADDENDUM = """NDA FOCUS AREAS: Analyze mutual vs one-sided scope, IP assignment breadth, residuals clauses,
+duration against 2-3 year market standard, jurisdiction, and definition of "Confidential Information"."""
+
+_EMPLOYMENT_ADDENDUM = """EMPLOYMENT FOCUS AREAS: At-will provisions, non-compete duration+geography vs 6-12 month standard,
 equity vesting cliff+acceleration (standard: 4yr/1yr cliff), IP ownership of side projects,
-arbitration waivers, and severance terms.
-"""
+arbitration waivers, and severance terms."""
 
-_SAAS_ADDENDUM = """
-SAAS_TOS FOCUS AREAS: Auto-renewal + cancellation notice windows (standard: 30-60 days),
+_SAAS_ADDENDUM = """SAAS_TOS FOCUS AREAS: Auto-renewal + cancellation notice windows (standard: 30-60 days),
 data ownership clauses, liability caps vs 12-month fees standard, SLA definitions,
-unilateral modification rights, and data retention on termination.
-"""
+unilateral modification rights, and data retention on termination."""
 
-_FREELANCE_ADDENDUM = """
-FREELANCE FOCUS AREAS: Payment terms + kill fees (standard: Net-30, 25-50% kill fee),
+_FREELANCE_ADDENDUM = """FREELANCE FOCUS AREAS: Payment terms + kill fees (standard: Net-30, 25-50% kill fee),
 IP transfer timing (should transfer only on full payment), revision limits,
-non-solicit clauses, and one-sided indemnification.
-"""
+non-solicit clauses, and one-sided indemnification."""
 
-_RENTAL_ADDENDUM = """
-RENTAL FOCUS AREAS: Security deposit vs 1-2 months standard, early termination penalties,
+_RENTAL_ADDENDUM = """RENTAL FOCUS AREAS: Security deposit vs 1-2 months standard, early termination penalties,
 maintenance responsibility allocation, subletting rights, notice periods (standard: 30 days),
-and rent increase mechanisms.
-"""
+and rent increase mechanisms."""
 
-_LOAN_ADDENDUM = """
-LOAN FOCUS AREAS: Interest rate vs market standard (6-12% APR for personal loans),
+_LOAN_ADDENDUM = """LOAN FOCUS AREAS: Interest rate vs market standard (6-12% APR for personal loans),
 prepayment penalties, default cure periods (standard: 10-30 days), collateral scope,
-and acceleration clauses.
-"""
+and acceleration clauses."""
 
-_PARTNERSHIP_ADDENDUM = """
-PARTNERSHIP FOCUS AREAS: Profit distribution fairness, deadlock resolution mechanisms,
+_PARTNERSHIP_ADDENDUM = """PARTNERSHIP FOCUS AREAS: Profit distribution fairness, deadlock resolution mechanisms,
 dissolution and exit provisions, post-dissolution non-compete scope,
-IP ownership assignment, and fiduciary duty language.
-"""
+IP ownership assignment, and fiduciary duty language."""
 
-_UNKNOWN_ADDENDUM = """
-GENERAL FOCUS: Apply balanced general legal analysis. Identify all liability, termination,
+_UNKNOWN_ADDENDUM = """GENERAL FOCUS: Apply balanced general legal analysis. Identify all liability, termination,
 payment, IP, and dispute resolution clauses. Flag any terms that deviate from typical
-commercial contract standards.
-"""
+commercial contract standards."""
 
 PROMPT_TEMPLATES = {
-    "NDA": _NDA_ADDENDUM,
-    "EMPLOYMENT": _EMPLOYMENT_ADDENDUM,
-    "SAAS_TOS": _SAAS_ADDENDUM,
-    "FREELANCE": _FREELANCE_ADDENDUM,
-    "RENTAL": _RENTAL_ADDENDUM,
-    "LOAN": _LOAN_ADDENDUM,
-    "PARTNERSHIP": _PARTNERSHIP_ADDENDUM,
-    "UNKNOWN": _UNKNOWN_ADDENDUM,
+    "NDA": _NDA_ADDENDUM, "EMPLOYMENT": _EMPLOYMENT_ADDENDUM,
+    "SAAS_TOS": _SAAS_ADDENDUM, "FREELANCE": _FREELANCE_ADDENDUM,
+    "RENTAL": _RENTAL_ADDENDUM, "LOAN": _LOAN_ADDENDUM,
+    "PARTNERSHIP": _PARTNERSHIP_ADDENDUM, "UNKNOWN": _UNKNOWN_ADDENDUM,
 }
 
-# ═══════════════════════════════════════════════════════════════
-# SELF-CRITIQUE PROMPT (Phase 15)
-# ═══════════════════════════════════════════════════════════════
 
 SELF_CRITIQUE_PROMPT = """You are a senior legal QA reviewer at ClauseClear AI.
 
@@ -182,7 +171,7 @@ Check for:
 2. Any critical obligations that were missed
 3. Any health_score that seems too high or too low given the risks found
 4. Any suggested_redlines that are impractical
-5. Any standard_justification that is vague, missing, or does not cite a specific Indian statute section — if so, add or correct it.
+5. Any standard_justification that is vague, missing, or does not cite a specific Indian statute section.
 
 Return the corrected, finalized JSON in the EXACT same schema as the input analysis.
 If the analysis is accurate, return it unchanged. Return ONLY the JSON object, no other text.
@@ -195,14 +184,14 @@ If the analysis is accurate, return it unchanged. Return ONLY the JSON object, n
 """
 
 # ═══════════════════════════════════════════════════════════════
-# LEGACY FEATURE PROMPTS (retained for specific feature calls)
+# LEGACY FEATURE PROMPTS
 # ═══════════════════════════════════════════════════════════════
 
 CLAUSE_SUMMARIZATION_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: CLAUSE-LEVEL SUMMARIZATION ===
 Break the contract into individual clauses and generate a short plain-language summary for each.
 
-=== REQUIRED JSON OUTPUT SCHEMA ===
+Return ONLY this JSON schema:
 {
   "quick_summary": "A 1-2 sentence overview of the entire contract",
   "total_clauses": <number>,
@@ -228,7 +217,7 @@ PLAIN_LANGUAGE_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: PLAIN LANGUAGE TRANSLATION ===
 Rewrite the entire contract in simple everyday English, section by section.
 
-=== REQUIRED JSON OUTPUT SCHEMA ===
+Return ONLY this JSON schema:
 {
   "quick_summary": "One-liner summary in plain English",
   "overall_complexity": "HIGH or MEDIUM or LOW",
@@ -242,9 +231,7 @@ Rewrite the entire contract in simple everyday English, section by section.
       "why_it_matters": "Why this section is important"
     }
   ],
-  "jargon_glossary": [
-    {"term": "Legal term", "plain_meaning": "Plain meaning"}
-  ],
+  "jargon_glossary": [{"term": "Legal term", "plain_meaning": "Plain meaning"}],
   "recommendations": ["Recommendation 1"]
 }
 
@@ -254,6 +241,7 @@ Rewrite the entire contract in simple everyday English, section by section.
 {contract_text}
 """
 
+
 CLAUSE_TAGGING_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: STRUCTURED CLAUSE TAGGING ===
 Tag every clause with a category from: Payment, Termination, Liability, Confidentiality,
@@ -261,7 +249,7 @@ Governing Law, Dispute Resolution, Warranties, Non-Compete, Data Privacy, IP Rig
 Force Majeure, Indemnification, Representations, Amendments, Assignment, Notices,
 Severability, Entire Agreement, Other.
 
-=== REQUIRED JSON OUTPUT SCHEMA ===
+Return ONLY this JSON schema:
 {
   "quick_summary": "One-liner overview of the contract structure",
   "total_clauses": <number>,
@@ -290,7 +278,7 @@ ENTITY_EXTRACTION_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: KEY ENTITY EXTRACTION ===
 Extract all critical metadata and named entities from the contract.
 
-=== REQUIRED JSON OUTPUT SCHEMA ===
+Return ONLY this JSON schema:
 {
   "quick_summary": "One-liner describing contract type and parties",
   "parties": [{"role": "Buyer/Seller/etc", "name": "Legal name", "key_obligations": ["Obligation 1"]}],
@@ -313,7 +301,7 @@ CONTRACT_COMPARE_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: CONTRACT COMPARISON & SEMANTIC REDLINING ===
 Compare Version A (original) and Version B (revised). Identify every meaningful change and its legal impact.
 
-=== REQUIRED JSON OUTPUT SCHEMA ===
+Return ONLY this JSON schema:
 {
   "quick_summary": "One-liner on how the revision changed the overall balance",
   "overall_verdict": "FAVORABLE_TO_A or FAVORABLE_TO_B or NEUTRAL or MIXED",
@@ -345,6 +333,7 @@ Compare Version A (original) and Version B (revised). Identify every meaningful 
 {extra_context}
 """
 
+
 MULTILINGUAL_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: MULTILINGUAL PLAIN-LANGUAGE TRANSLATION ===
 Translate the contract into the TARGET LANGUAGE below in plain everyday language.
@@ -352,7 +341,7 @@ Translate the contract into the TARGET LANGUAGE below in plain everyday language
 === TARGET LANGUAGE ===
 {extra_context}
 
-=== REQUIRED JSON OUTPUT SCHEMA ===
+Return ONLY this JSON schema:
 {
   "target_language": "{extra_context}",
   "quick_summary": "One-sentence overview in the target language",
@@ -382,7 +371,7 @@ CHAT_PROMPT = BASE_SYSTEM_PROMPT + """
 === TASK: FOLLOW-UP CONVERSATION ===
 Answer the user's question about the contract using contract text and conversation history.
 
-=== REQUIRED JSON OUTPUT SCHEMA ===
+Return ONLY this JSON schema:
 {
   "answer": "Detailed plain-English answer",
   "relevant_clauses": ["Brief clause reference"],
@@ -400,22 +389,15 @@ Answer the user's question about the contract using contract text and conversati
 {user_question}
 """
 
-FEATURE_PROMPTS = {
-    "summarize": CLAUSE_SUMMARIZATION_PROMPT,
-    "translate": PLAIN_LANGUAGE_PROMPT,
-    "tags": CLAUSE_TAGGING_PROMPT,
-    "entities": ENTITY_EXTRACTION_PROMPT,
-    "compare": CONTRACT_COMPARE_PROMPT,
-    "multilingual": MULTILINGUAL_PROMPT,
-    "highlight": """__PLAYBOOK_INSTRUCTION__
+HIGHLIGHT_PROMPT = """__PLAYBOOK_INSTRUCTION__
 You are a senior legal risk analyst. Read the contract and classify every distinct clause or sentence into exactly ONE of these 4 tiers:
 
-- HIGH_RISK  : Severely one-sided, potentially illegal, or creates major liability (e.g. unlimited liability, unilateral termination with no notice, automatic renewal traps, IP ownership grabs, non-compete with no time limit)
-- RISK       : Moderately unfavorable or worth negotiating (e.g. short notice periods, broad indemnification, penalty clauses)
+- HIGH_RISK  : Severely one-sided, potentially illegal, or creates major liability
+- RISK       : Moderately unfavorable or worth negotiating
 - NEUTRAL    : Standard boilerplate with no significant advantage to either party
-- POSITIVE   : Explicitly protects or benefits the reader (e.g. liability caps, termination for convenience, dispute resolution)
+- POSITIVE   : Explicitly protects or benefits the reader
 
-Return ONLY valid JSON — no markdown, no text outside the JSON:
+Return ONLY valid JSON:
 {
   "quick_summary": "<one sentence overall risk assessment>",
   "highlighted_clauses": [
@@ -437,7 +419,16 @@ Return ONLY valid JSON — no markdown, no text outside the JSON:
 
 CONTRACT:
 {contract_text}
-""",
+"""
+
+FEATURE_PROMPTS = {
+    "summarize": CLAUSE_SUMMARIZATION_PROMPT,
+    "translate": PLAIN_LANGUAGE_PROMPT,
+    "tags": CLAUSE_TAGGING_PROMPT,
+    "entities": ENTITY_EXTRACTION_PROMPT,
+    "compare": CONTRACT_COMPARE_PROMPT,
+    "multilingual": MULTILINGUAL_PROMPT,
+    "highlight": HIGHLIGHT_PROMPT,
 }
 
 FEATURE_LABELS = {
@@ -454,6 +445,7 @@ FEATURE_LABELS = {
     "checklist": "Contract Checklist",
 }
 
+
 # ═══════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════
@@ -469,9 +461,11 @@ def _build_memory_block(memory_turns):
 
 
 def _call_gemini(prompt_text: str, temperature: float = 0.3) -> dict:
-    """Call Gemini API with retry logic. Returns parsed JSON dict or error dict."""
+    """Call Gemini API (PRIMARY). Returns parsed JSON dict or error dict."""
     if not Config.GEMINI_API_KEY:
-        return {"error": "Gemini API key is not configured. Please add GEMINI_API_KEY to your .env file."}
+        return {"error": "NO_GEMINI_KEY"}
+
+    client = _get_gemini_client()
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -483,15 +477,11 @@ def _call_gemini(prompt_text: str, temperature: float = 0.3) -> dict:
                     max_output_tokens=8192,
                 ),
             )
-
             raw = response.text.strip()
-
-            # Strip markdown code fences if present
             if raw.startswith("```"):
                 first_nl = raw.index("\n")
                 last_fence = raw.rfind("```")
                 raw = raw[first_nl + 1:last_fence].strip()
-
             return json.loads(raw)
 
         except json.JSONDecodeError:
@@ -499,13 +489,12 @@ def _call_gemini(prompt_text: str, temperature: float = 0.3) -> dict:
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY_SECONDS)
                 continue
-            return {"error": "The AI returned an unexpected format. Please try again."}
+            return {"error": "GEMINI_BAD_JSON"}
+
         except Exception as exc:
             err = str(exc)
-            # Handle 429 quota / rate-limit errors with exponential backoff + retry
             if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                # Try to parse the suggested retry delay from the error message
-                retry_delay = RETRY_DELAY_SECONDS * (2 ** attempt)  # exponential: 2s, 4s, 8s
+                retry_delay = RETRY_DELAY_SECONDS * (2 ** attempt)
                 try:
                     match = re.search(r"retryDelay.*?(\d+)s", err)
                     if match:
@@ -513,54 +502,132 @@ def _call_gemini(prompt_text: str, temperature: float = 0.3) -> dict:
                 except Exception:
                     pass
                 if attempt < MAX_RETRIES - 1:
-                    logger.warning(
-                        "Gemini 429 quota hit (attempt %d/%d). Waiting %ds before retry...",
-                        attempt + 1, MAX_RETRIES, retry_delay,
-                    )
+                    logger.warning("Gemini quota/rate-limit (attempt %d/%d). Retrying in %ds...", attempt + 1, MAX_RETRIES, retry_delay)
                     time.sleep(retry_delay)
                     continue
-                logger.error("Gemini quota exhausted after %d retries: %s", MAX_RETRIES, err)
-                return {
-                    "error": (
-                        "Gemini API daily quota exceeded (free tier: 20 requests/day). "
-                        "Please wait a few minutes and try again, or upgrade your Gemini API plan at "
-                        "https://ai.google.dev/gemini-api/docs/rate-limits"
-                    )
-                }
+                logger.warning("Gemini quota exhausted after %d retries — triggering Claude fallback.", MAX_RETRIES)
+                return {"error": "GEMINI_QUOTA_EXCEEDED"}
             if "503" in err or "UNAVAILABLE" in err:
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
                     continue
-                return {"error": "The AI service is temporarily busy. Please try again in a moment."}
+                return {"error": "GEMINI_UNAVAILABLE"}
             logger.error("Gemini API error: %s", err, exc_info=True)
-            return {"error": "An error occurred while processing your request. Please try again."}
+            return {"error": f"GEMINI_ERROR: {err}"}
 
-    return {"error": "Failed after maximum retries."}
+    return {"error": "GEMINI_MAX_RETRIES"}
+
+
+def _call_claude(prompt_text: str, temperature: float = 0.3) -> dict:
+    """Call Claude API (FALLBACK). Returns parsed JSON dict or error dict."""
+    if not Config.ANTHROPIC_API_KEY:
+        return {"error": "Anthropic API key is not configured. Please add ANTHROPIC_API_KEY to your .env file."}
+
+    client = _get_claude_client()
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.messages.create(
+                model=Config.CLAUDE_MODEL,
+                max_tokens=8192,
+                temperature=temperature,
+                messages=[{"role": "user", "content": prompt_text}],
+            )
+            raw = response.content[0].text.strip()
+            if raw.startswith("```"):
+                first_nl = raw.index("\n")
+                last_fence = raw.rfind("```")
+                raw = raw[first_nl + 1:last_fence].strip()
+            return json.loads(raw)
+
+        except json.JSONDecodeError:
+            logger.error("Claude returned invalid JSON (attempt %d/%d)", attempt + 1, MAX_RETRIES)
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY_SECONDS)
+                continue
+            return {"error": "The AI returned an unexpected format. Please try again."}
+
+        except anthropic.RateLimitError:
+            retry_delay = RETRY_DELAY_SECONDS * (2 ** attempt)
+            if attempt < MAX_RETRIES - 1:
+                logger.warning("Claude rate limit (attempt %d/%d). Waiting %ds...", attempt + 1, MAX_RETRIES, retry_delay)
+                time.sleep(retry_delay)
+                continue
+            return {"error": "Rate limit exceeded on both AI providers. Please wait a moment and try again."}
+
+        except anthropic.AuthenticationError:
+            logger.error("Claude authentication failed — check ANTHROPIC_API_KEY in .env")
+            return {"error": "Invalid Anthropic API key. Please check your .env file."}
+
+        except anthropic.APIStatusError as exc:
+            logger.error("Claude API status error: %s", str(exc), exc_info=True)
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+                continue
+            return {"error": "Both AI services are temporarily unavailable. Please try again shortly."}
+
+        except Exception as exc:
+            logger.error("Unexpected Claude API error: %s", str(exc), exc_info=True)
+            return {"error": "An unexpected error occurred. Please try again."}
+
+    return {"error": "Failed after maximum retries on fallback provider."}
+
+
+# Sentinel prefixes that signal a Gemini failure worth falling back from
+_GEMINI_FALLBACK_SIGNALS = (
+    "GEMINI_QUOTA_EXCEEDED", "GEMINI_UNAVAILABLE",
+    "GEMINI_MAX_RETRIES", "GEMINI_BAD_JSON",
+    "GEMINI_ERROR", "NO_GEMINI_KEY",
+)
+
+
+def _call_ai(prompt_text: str, temperature: float = 0.3) -> dict:
+    """
+    Primary dispatcher: tries Gemini first.
+    Falls back to Claude automatically on quota exhaustion or any Gemini failure.
+    """
+    result = _call_gemini(prompt_text, temperature)
+
+    if "error" in result and any(result["error"].startswith(s) for s in _GEMINI_FALLBACK_SIGNALS):
+        gemini_err = result["error"]
+        logger.warning("Gemini failed (%s) — switching to Claude fallback.", gemini_err)
+        result = _call_claude(prompt_text, temperature)
+        if "error" not in result:
+            logger.info("Claude fallback succeeded.")
+        else:
+            logger.error("Claude fallback also failed: %s", result["error"])
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════
-# EMBEDDING & RAG (Phase 16)
+# EMBEDDING & RAG (lightweight keyword similarity — no extra API)
 # ═══════════════════════════════════════════════════════════════
 
 def generate_embedding(text: str) -> list:
     """
-    Generate a vector embedding for the given text using text-embedding-004.
-    Returns a list of floats, or empty list on failure.
+    Generate a simple TF-IDF-style keyword vector for RAG similarity.
+    No external embedding API required.
     """
     try:
-        response = client.models.embed_content(
-            model="text-embedding-004",
-            contents=text[:8000],
-        )
-        embedding = response.embeddings[0].values
-        return list(embedding)
+        words = re.findall(r'\b[a-z]{3,}\b', text.lower()[:8000])
+        freq = {}
+        for w in words:
+            freq[w] = freq.get(w, 0) + 1
+        total = sum(freq.values()) or 1
+        # Return a stable sorted list of (word, normalized_freq) pairs as a flat float list
+        top_words = sorted(freq.items(), key=lambda x: -x[1])[:300]
+        vec = [v / total for _, v in top_words]
+        # Pad or truncate to fixed length 300
+        vec = vec[:300] + [0.0] * (300 - len(vec))
+        return vec
     except Exception as exc:
         logger.error("Embedding generation failed: %s", exc)
         return []
 
 
 def cosine_similarity(a: list, b: list) -> float:
-    """Compute cosine similarity between two vectors using pure Python math."""
+    """Compute cosine similarity between two vectors."""
     if not a or not b or len(a) != len(b):
         return 0.0
     dot = sum(x * y for x, y in zip(a, b))
@@ -572,35 +639,29 @@ def cosine_similarity(a: list, b: list) -> float:
 
 
 def find_similar_analysis(new_embedding: list, past_embeddings: list) -> dict:
-    """
-    Find the most similar past analysis using cosine similarity.
-    Returns the best match dict or None.
-    """
+    """Find the most similar past analysis using cosine similarity."""
     if not new_embedding or not past_embeddings:
         return None
-
     best_score = 0.0
     best_match = None
     for entry in past_embeddings:
-        score = cosine_similarity(new_embedding, entry["embedding"])
+        score = cosine_similarity(new_embedding, entry.get("embedding", []))
         if score > best_score:
             best_score = score
             best_match = entry
-
-    if best_match and best_score > 0.75:  # threshold for meaningful similarity
+    if best_match and best_score > 0.75:
         return best_match
     return None
 
 
 # ═══════════════════════════════════════════════════════════════
-# UNIFIED ANALYSIS (Phase 2 + 3 + 15 + 16)
+# UNIFIED ANALYSIS
 # ═══════════════════════════════════════════════════════════════
 
 def classify_contract(contract_text: str) -> str:
-    """Quick single-sentence classification call. Returns contract type string."""
-    # Use replace() not .format() — contract text may contain { } characters
+    """Quick single-call classification. Returns contract type string."""
     prompt = CLASSIFY_ONLY_PROMPT.replace("{contract_text}", contract_text[:5000])
-    result = _call_gemini(prompt, temperature=0.1)
+    result = _call_ai(prompt, temperature=0.1)
     if "error" in result:
         logger.warning("Classification failed, defaulting to UNKNOWN: %s", result["error"])
         return "UNKNOWN"
@@ -617,9 +678,8 @@ def unified_analyze(
     evaluation_standard: str = DEFAULT_STANDARD,
 ) -> dict:
     """
-    Single unified Gemini call: classify + analyze + obligations + health score.
+    Single unified Claude call: classify + analyze + obligations + health score.
     Implements self-critique loop and historical RAG context injection.
-
     Returns the full analysis JSON dict.
     """
     start_time = time.time()
@@ -632,22 +692,22 @@ def unified_analyze(
     contract_type = classify_contract(contract_text)
     logger.info("Contract classified as: %s", contract_type)
 
-    # Step 2: Always generate contract text embedding upfront (used for both RAG lookup AND storage)
-    logger.info("Generating contract text embedding for session=%s", session_id)
+    # Step 2: Generate embedding for RAG
+    logger.info("Generating embedding for session=%s", session_id)
     rag_embedding = generate_embedding(contract_text[:8000])
 
-    # Step 3: Build RAG historical context using the contract text embedding
+    # Step 3: Build RAG historical context
     historical_context = ""
     if past_embeddings and rag_embedding:
         similar = find_similar_analysis(rag_embedding, past_embeddings)
         if similar:
             historical_context = (
                 f"=== HISTORICAL CONTEXT ===\n"
-                f"We have analyzed a similar {similar['contract_type']} contract before "
+                f"We analyzed a similar {similar['contract_type']} contract before "
                 f"(file: {similar['filename']}) which received a health score of {similar['health_score']}/100. "
                 f"Compare this contract against that precedent."
             )
-            logger.info("RAG context injected from analysis_id=%s", similar["analysis_id"])
+            logger.info("RAG context injected from analysis_id=%s", similar.get("analysis_id"))
 
     # Step 4: Build the full analysis prompt
     benchmark_context = format_benchmark_for_prompt(contract_type)
@@ -667,30 +727,27 @@ def unified_analyze(
 
     # Step 5: Primary analysis call
     logger.info("Running primary analysis call for session=%s", session_id)
-    analysis = _call_gemini(prompt, temperature=0.3)
+    analysis = _call_ai(prompt, temperature=0.3)
 
     if "error" in analysis:
         return analysis
 
-    # Step 6: Self-critique loop (Phase 15) — skipped on free tier to conserve quota
+    # Step 6: Optional self-critique loop
     if ENABLE_SELF_CRITIQUE:
         logger.info("Running self-critique call for session=%s", session_id)
         critique_prompt = SELF_CRITIQUE_PROMPT.format(
             contract_text=contract_text[:8000],
             analysis_json=json.dumps(analysis, indent=2)[:6000],
         )
-        critiqued = _call_gemini(critique_prompt, temperature=0.2)
-
+        critiqued = _call_ai(critique_prompt, temperature=0.2)
         if "error" not in critiqued and isinstance(critiqued, dict) and "health_score" in critiqued:
             analysis = critiqued
             logger.info("Self-critique applied successfully")
         else:
             logger.warning("Self-critique returned unusable result, keeping original analysis")
     else:
-        logger.info("Self-critique skipped (ENABLE_SELF_CRITIQUE=False) to conserve API quota")
+        logger.info("Self-critique skipped (ENABLE_SELF_CRITIQUE=False)")
 
-    # Step 7: Contract text embedding is already stored from Step 2.
-    # No override — we store the contract text embedding for consistent RAG similarity.
     duration_ms = int((time.time() - start_time) * 1000)
     logger.info(
         "Analysis complete | session=%s | file=%s | type=%s | score=%s | duration=%dms",
@@ -698,7 +755,6 @@ def unified_analyze(
         analysis.get("health_score", "?"), duration_ms,
     )
 
-    # Attach metadata for the caller
     analysis["_contract_type"] = contract_type
     analysis["_embedding"] = rag_embedding
     analysis["_duration_ms"] = duration_ms
@@ -707,7 +763,7 @@ def unified_analyze(
 
 
 # ═══════════════════════════════════════════════════════════════
-# LEGACY FEATURE ANALYZE (retained for summarize/translate/etc)
+# LEGACY FEATURE ANALYZE
 # ═══════════════════════════════════════════════════════════════
 
 def analyze_contract(feature, contract_text, memory_turns=None, extra_context="", evaluation_standard=DEFAULT_STANDARD):
@@ -728,7 +784,7 @@ def analyze_contract(feature, contract_text, memory_turns=None, extra_context=""
               .replace("{contract_text}", contract_text[:15000])
               .replace("{extra_context}", (extra_context or "")[:8000]))
     prompt = prompt.replace("__PLAYBOOK_INSTRUCTION__", PLAYBOOKS.get(evaluation_standard, PLAYBOOKS[DEFAULT_STANDARD]))
-    return _call_gemini(prompt)
+    return _call_ai(prompt)
 
 
 def chat_followup(user_question, contract_text, memory_turns=None):
@@ -742,16 +798,16 @@ def chat_followup(user_question, contract_text, memory_turns=None):
               .replace("{memory_block}", memory_block)
               .replace("{contract_text}", (contract_text or "No contract uploaded yet.")[:15000])
               .replace("{user_question}", user_question))
-    return _call_gemini(prompt)
+    return _call_ai(prompt)
 
 
 # ═══════════════════════════════════════════════════════════════
-# CONTRACT CHECKLIST (Phase — New Feature)
+# CONTRACT CHECKLIST
 # ═══════════════════════════════════════════════════════════════
 
 _CHECKLIST_PROMPT = """You are a contract compliance expert. Analyze the contract text below and check for the presence of 10 essential legal clauses.
 
-Return ONLY a valid JSON object in this exact format — no markdown, no text outside JSON:
+Return ONLY a valid JSON object — no markdown, no text outside JSON:
 {
   "score": <integer 0-10>,
   "overall_summary": "<one sentence overall assessment>",
@@ -789,13 +845,11 @@ def run_checklist(contract_text: str) -> dict:
     if not contract_text or not contract_text.strip():
         return {"error": "No contract text provided."}
     prompt = _CHECKLIST_PROMPT.replace("{contract_text}", contract_text[:15000])
-    result = _call_gemini(prompt)
+    result = _call_ai(prompt)
     if "error" in result:
         return result
-    # Ensure score is consistent with checklist
     if "checklist" in result:
         passed = sum(1 for i in result["checklist"] if i.get("present") is True or i.get("status") == "present")
         result["score"] = passed
         result.setdefault("items", result["checklist"])
     return result
-

@@ -298,8 +298,8 @@ function initToolsPage() {
             });
             const data = await resp.json();
             hideToolLoading('compare');
-            if (!resp.ok && !data.result) { renderCompareResult({ error: data.error || 'Compare failed.' }); return; }
-            renderCompareResult(data.result || data);
+            // Pass errors through — renderCompareResult handles r.error display
+            renderCompareResult(!resp.ok ? { error: data.error || 'Compare failed.' } : (data.result || data));
         } catch(e) { hideToolLoading('compare'); showToast('Compare failed. Please try again.', 'error'); }
     });
 
@@ -315,8 +315,8 @@ function initToolsPage() {
             });
             const data = await resp.json();
             hideToolLoading('entities');
-            if (!resp.ok && !data.result) { renderEntitiesResult({ error: data.error || 'Extraction failed.' }); return; }
-            renderEntitiesResult(data.result || data);
+            // Pass errors through — renderEntitiesResult handles r.error display
+            renderEntitiesResult(!resp.ok ? { error: data.error || 'Extraction failed.' } : (data.result || data));
         } catch(e) { hideToolLoading('entities'); showToast('Entity extraction failed.', 'error'); }
     });
 
@@ -351,7 +351,8 @@ function initToolsPage() {
             });
             const data = await resp.json();
             hideToolLoading('translate');
-            renderTranslateResult(data.result || data, mode, lang);
+            // Pass errors through — renderTranslateResult handles r.error display
+            renderTranslateResult(!resp.ok ? { error: data.error || 'Translation failed.' } : (data.result || data), mode, lang);
         } catch(e) { hideToolLoading('translate'); showToast('Translation failed.', 'error'); }
     });
 
@@ -637,6 +638,20 @@ function renderTranslateResult(r, mode, lang) {
 
 // ── Checklist result renderer ─────────────────────────────────────────────────
 function renderChecklistResult(r) {
+    // Guard: show error instead of a misleading 0/10 score when the API fails
+    if (r.error) {
+        const container = document.getElementById('checklist-items');
+        const scoreRow = document.querySelector('#tool-checklist .checklist-score-row');
+        if (scoreRow) scoreRow.style.display = 'none';
+        if (container) container.innerHTML = `<p class="quick-summary" style="color:var(--color-text-danger);padding:1rem 0;">❌ ${DOMPurify.sanitize(r.error)}</p>`;
+        document.getElementById('checklist-results').style.display = 'block';
+        return;
+    }
+
+    // Restore score row visibility in case it was previously hidden by an error
+    const scoreRow = document.querySelector('#tool-checklist .checklist-score-row');
+    if (scoreRow) scoreRow.style.display = '';
+
     const items = r.checklist || r.items || [];
     const passed = items.filter(i => i.present === true || i.status === 'present').length;
     const total = items.length || 10;
