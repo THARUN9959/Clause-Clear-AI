@@ -76,9 +76,13 @@ Every Gemini API call follows these principles:
 | `/` | GET | Landing page |
 | `/analyze` | GET | Analysis page (split layout) |
 | `/history` | GET | Session history page |
-| `/api/upload` | POST | Upload PDF/TXT, extract text |
-| `/api/analyze` | POST | Run 1 of 4 analysis features |
-| `/api/chat` | POST | Follow-up questions with memory |
+| `/api/upload` | POST | Upload PDF/TXT, extract text via PyPDF2 or Tesseract OCR |
+| `/api/analyze` | POST | Unified Analysis (classification, score, risks, obligations) |
+| `/api/analyze/feature` | POST | Run legacy/individual analysis (summarize, translate, etc) |
+| `/api/chat` | POST | Follow-up questions with session memory |
+| `/api/history/<id>` | GET | Load a past analysis from DB |
+| `/api/history/<id>` | DELETE | Delete an analysis from DB |
+| `/api/export/<id>` | GET | Download analysis as PDF report |
 | `/api/memory` | GET | Get session memory state |
 | `/api/clear-memory` | POST | Clear all session memory |
 

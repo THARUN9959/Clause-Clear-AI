@@ -51,6 +51,7 @@ function initTheme() {
 const LOAD_STAGES = [
     'Extracting document text…',
     'Classifying contract type…',
+    'Applying Indian legal standard…',
     'Analyzing clauses against market benchmarks…',
     'Identifying obligations and deadlines…',
     'Calculating health score…',
@@ -303,18 +304,26 @@ function renderLegacyResult(data, tabId) {
     // Feature-specific renderers
     if (r.highlighted_clauses) {
         html += renderHighlightHTML(r);
-    } else if (r.clauses || r.quick_summary) {
+    } else if (r.clauses || r.quick_summary || r.sections) {
         if (r.quick_summary) html += `<p class="quick-summary">${DOMPurify.sanitize(r.quick_summary)}</p>`;
-        if (r.clauses && r.clauses.length) {
-            html += r.clauses.map(c => `
+        
+        const itemsToRender = r.clauses || r.sections;
+        if (itemsToRender && itemsToRender.length) {
+            html += itemsToRender.map(c => {
+                const textSnippet = c.clause || c.original_clause || c.original_text_snippet || c.original_text || '';
+                const plainLang = c.plain_language || c.plain_summary || '';
+                const summaryText = c.summary || '';
+                
+                return `
                 <div class="clause-card">
                     <div class="clause-tag-row">
                         ${(c.tags || []).map(t => `<span class="clause-tag">${DOMPurify.sanitize(t)}</span>`).join('')}
                     </div>
-                    <p class="clause-text">${DOMPurify.sanitize(c.clause || c.original_clause || '')}</p>
-                    ${c.plain_language ? `<p class="clause-plain">✏️ ${DOMPurify.sanitize(c.plain_language)}</p>` : ''}
-                    ${c.summary ? `<p class="clause-plain">📋 ${DOMPurify.sanitize(c.summary)}</p>` : ''}
-                </div>`).join('');
+                    <p class="clause-text">${DOMPurify.sanitize(textSnippet)}</p>
+                    ${plainLang ? `<p class="clause-plain">✏️ ${DOMPurify.sanitize(plainLang)}</p>` : ''}
+                    ${summaryText ? `<p class="clause-plain">📋 ${DOMPurify.sanitize(summaryText)}</p>` : ''}
+                </div>`;
+            }).join('');
         }
     } else {
         html += `<pre class="json-dump">${DOMPurify.sanitize(JSON.stringify(r, null, 2))}</pre>`;
@@ -601,11 +610,11 @@ async function _runSelected() {
                 if (sr.quick_summary) html += `<h4 class="er-heading">📋 Summary</h4><p class="quick-summary">${DOMPurify.sanitize(sr.quick_summary)}</p>`;
                 if (sr.clauses?.length) {
                     html += `<h4 class="er-heading">📑 Clause Summaries</h4>`;
-                    html += sr.clauses.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.clause || '')}</p><p class="clause-plain">📋 ${DOMPurify.sanitize(c.summary || '')}</p></div>`).join('');
+                    html += sr.clauses.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_text_snippet || '')}</p><p class="clause-plain">📋 ${DOMPurify.sanitize(c.plain_summary || '')}</p></div>`).join('');
                 }
-                if (pr.clauses?.length) {
+                if (pr.sections?.length) {
                     html += `<h4 class="er-heading" style="margin-top:1.5rem;">✏️ Plain Language</h4>`;
-                    html += pr.clauses.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_clause || c.clause || '')}</p><p class="clause-plain">✏️ ${DOMPurify.sanitize(c.plain_language || '')}</p></div>`).join('');
+                    html += pr.sections.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_text || '')}</p><p class="clause-plain">✏️ ${DOMPurify.sanitize(c.plain_language || '')}</p></div>`).join('');
                 }
                 html += '</div>';
                 panel.innerHTML = html;

@@ -42,6 +42,7 @@ from services.document_service import extract_text, allowed_file
 from services.gemini_service import (
     unified_analyze, analyze_contract, chat_followup, FEATURE_LABELS,
 )
+from services.playbooks import PLAYBOOKS, DEFAULT_STANDARD
 
 # ─── Logging setup ────────────────────────────────────────────────────────────
 
@@ -100,8 +101,11 @@ Config.init_app()
 
 # Create DB tables and run startup cleanup
 create_db()
-with get_db_session() as _startup_db:
+_startup_db = get_db_session()
+try:
     cleanup_old_sessions(_startup_db, Config.UPLOAD_FOLDER)
+finally:
+    _startup_db.close()
 
 
 # ─── DB session per request ───────────────────────────────────────────────────
@@ -200,14 +204,17 @@ def history():
 
 # ─── API: Upload ──────────────────────────────────────────────────────────────
 
-def _apply_limit(route_func, rate: str):
-    """Apply rate limit if limiter is available."""
-    if limiter:
-        return limiter.limit(rate)(route_func)
-    return route_func
+def apply_limit(rate: str):
+    """Decorator to apply rate limit if limiter is available."""
+    def decorator(func):
+        if limiter:
+            return limiter.limit(rate)(func)
+        return func
+    return decorator
 
 
 @app.route("/api/upload", methods=["POST"])
+@apply_limit("10 per hour")
 def api_upload():
     """Handle contract file upload — extract text and store in session memory."""
     if "file" not in request.files:
@@ -218,7 +225,7 @@ def api_upload():
         return jsonify({"error": "No file selected."}), 400
 
     if not allowed_file(file.filename):
-        return jsonify({"error": "Invalid file type. Accepted: PDF, DOCX, PNG, JPG, JPEG."}), 400
+        return jsonify({"error": "Invalid file type. Accepted: PDF, DOCX, TXT, PNG, JPG, JPEG."}), 400
 
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
@@ -253,14 +260,11 @@ def api_upload():
     })
 
 
-# Apply rate limits after route definition
-if limiter:
-    api_upload = limiter.limit("10 per hour")(api_upload)
-
 
 # ─── API: Unified Analyze ─────────────────────────────────────────────────────
 
 @app.route("/api/analyze", methods=["POST"])
+@apply_limit("10 per hour")
 def api_analyze():
     """Run unified contract analysis (classify + analyze + obligations + health score)."""
     data = request.get_json() or {}
@@ -278,7 +282,6 @@ def api_analyze():
     # Fetch past embeddings for RAG
     past_embeddings = get_all_embeddings(g.db, _sid())
 
-    from services.playbooks import PLAYBOOKS, DEFAULT_STANDARD
     evaluation_standard = data.get("evaluation_standard", DEFAULT_STANDARD)
     if evaluation_standard not in PLAYBOOKS:
         evaluation_standard = DEFAULT_STANDARD
@@ -294,7 +297,9 @@ def api_analyze():
 
     if "error" in result:
         logger.error("Analysis error for session=%s: %s", _sid(), result["error"])
-        return jsonify(result), 500
+        # Return 429 status if it's a quota error so the frontend can handle it distinctly
+        status_code = 429 if "quota" in result["error"].lower() or "rate" in result["error"].lower() else 500
+        return jsonify(result), status_code
 
     # Persist to DB
     embedding = result.pop("_embedding", [])
@@ -326,13 +331,11 @@ def api_analyze():
     })
 
 
-if limiter:
-    api_analyze = limiter.limit("10 per hour")(api_analyze)
-
 
 # ─── API: Legacy Feature Analyze ──────────────────────────────────────────────
 
 @app.route("/api/analyze/feature", methods=["POST"])
+@apply_limit("10 per hour")
 def api_analyze_feature():
     """Run a legacy feature-specific analysis (summarize, translate, tags, etc.)."""
     data = request.get_json() or {}
@@ -346,19 +349,26 @@ def api_analyze_feature():
     if not contract_text:
         return jsonify({"error": "No contract text available."}), 400
 
-    from services.playbooks import PLAYBOOKS, DEFAULT_STANDARD
     evaluation_standard = data.get("evaluation_standard", DEFAULT_STANDARD)
     if evaluation_standard not in PLAYBOOKS:
         evaluation_standard = DEFAULT_STANDARD
 
     result = analyze_contract(feature, contract_text, mem.get_turns(), extra_context, evaluation_standard)
 
-    if "error" not in result:
-        feature_label = FEATURE_LABELS.get(feature, feature)
-        summary = result.get("quick_summary", "Analysis completed.")
-        mem.add_turn("user", f"[{feature_label}]")
-        mem.add_turn("assistant", summary)
-        mem.add_analysis(feature, summary)
+    if "error" in result:
+        status_code = 429 if "quota" in result["error"].lower() or "rate" in result["error"].lower() else 500
+        return jsonify({
+            "feature": feature,
+            "feature_label": FEATURE_LABELS.get(feature, feature),
+            "result": result,
+            "error": result["error"],
+        }), status_code
+
+    feature_label = FEATURE_LABELS.get(feature, feature)
+    summary = result.get("quick_summary", "Analysis completed.")
+    mem.add_turn("user", f"[{feature_label}]")
+    mem.add_turn("assistant", summary)
+    mem.add_analysis(feature, summary)
 
     return jsonify({
         "feature": feature,
@@ -367,13 +377,10 @@ def api_analyze_feature():
     })
 
 
-if limiter:
-    api_analyze_feature = limiter.limit("10 per hour")(api_analyze_feature)
-
-
 # ─── API: Chat ────────────────────────────────────────────────────────────────
 
 @app.route("/api/chat", methods=["POST"])
+@apply_limit("30 per hour")
 def api_chat():
     """Handle follow-up chat about the loaded contract."""
     data = request.get_json() or {}
@@ -398,10 +405,6 @@ def api_chat():
         mem.add_turn("assistant", answer)
 
     return jsonify(result)
-
-
-if limiter:
-    api_chat = limiter.limit("30 per hour")(api_chat)
 
 
 # ─── API: History ─────────────────────────────────────────────────────────────
@@ -494,6 +497,7 @@ def api_clear_memory():
 # ─── API: Tools — Checklist ──────────────────────────────────────────────────
 
 @app.route("/api/tools/checklist", methods=["POST"])
+@apply_limit("10 per hour")
 def api_tools_checklist():
     """Run the contract compliance checklist."""
     from services.gemini_service import run_checklist
@@ -508,12 +512,9 @@ def api_tools_checklist():
 
     result = run_checklist(contract_text)
     if "error" in result:
-        return jsonify(result), 500
+        status_code = 429 if "quota" in result["error"].lower() or "rate" in result["error"].lower() else 500
+        return jsonify(result), status_code
     return jsonify(result)
-
-
-if limiter:
-    api_tools_checklist = limiter.limit("10 per hour")(api_tools_checklist)
 
 
 # ─── Error handlers ───────────────────────────────────────────────────────────

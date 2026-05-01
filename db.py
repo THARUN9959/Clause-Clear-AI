@@ -17,7 +17,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
-from sqlmodel import Field, SQLModel, create_engine, Session, select, Relationship
+from sqlmodel import Field, SQLModel, create_engine, Session, select, Relationship, func
 
 logger = logging.getLogger(__name__)
 
@@ -187,8 +187,11 @@ def get_session_analyses(db: Session, session_id: str, page: int = 1, per_page: 
     )
     rows = db.exec(stmt).all()
 
-    count_stmt = select(AnalysisModel).where(AnalysisModel.session_id == session_id)
-    total = len(db.exec(count_stmt).all())
+    # Use COUNT(*) — avoids fetching all rows just to count them
+    count_stmt = select(func.count()).select_from(AnalysisModel).where(
+        AnalysisModel.session_id == session_id
+    )
+    total = db.exec(count_stmt).one()
     return rows, total
 
 
@@ -203,9 +206,6 @@ def delete_analysis(db: Session, analysis_id: int, session_id: str) -> bool:
         return False
 
     # Delete linked rows first (SQLite doesn't enforce FK cascade by default)
-    db.exec(  # type: ignore[call-overload]
-        select(ChatHistoryModel).where(ChatHistoryModel.analysis_id == analysis_id)
-    )
     for ch in db.exec(select(ChatHistoryModel).where(ChatHistoryModel.analysis_id == analysis_id)).all():
         db.delete(ch)
     for obl in db.exec(select(ObligationModel).where(ObligationModel.analysis_id == analysis_id)).all():
@@ -247,7 +247,8 @@ def cleanup_old_sessions(db: Session, upload_folder: str, days: int = 7):
     Delete sessions older than `days` days and remove any orphaned upload files.
     Safe to call on every app startup — idempotent.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    # Use naive UTC to match what SQLite stores (avoids timezone-aware vs naive comparison errors)
+    cutoff = datetime.utcnow() - timedelta(days=days)
 
     old_sessions = db.exec(
         select(SessionModel).where(SessionModel.last_accessed < cutoff)

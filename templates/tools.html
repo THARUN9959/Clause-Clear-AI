@@ -298,6 +298,7 @@ function initToolsPage() {
             });
             const data = await resp.json();
             hideToolLoading('compare');
+            if (!resp.ok && !data.result) { renderCompareResult({ error: data.error || 'Compare failed.' }); return; }
             renderCompareResult(data.result || data);
         } catch(e) { hideToolLoading('compare'); showToast('Compare failed. Please try again.', 'error'); }
     });
@@ -314,6 +315,7 @@ function initToolsPage() {
             });
             const data = await resp.json();
             hideToolLoading('entities');
+            if (!resp.ok && !data.result) { renderEntitiesResult({ error: data.error || 'Extraction failed.' }); return; }
             renderEntitiesResult(data.result || data);
         } catch(e) { hideToolLoading('entities'); showToast('Entity extraction failed.', 'error'); }
     });
@@ -390,34 +392,58 @@ function renderCompareResult(r) {
     const el = document.getElementById('compare-results-content');
     if (!el) return;
 
+    // Handle top-level error
+    if (r.error) {
+        el.innerHTML = `<p class="quick-summary" style="color:var(--error)">❌ ${DOMPurify.sanitize(r.error)}</p>`;
+        document.getElementById('compare-results').style.display = 'block';
+        return;
+    }
+
     const summary = DOMPurify.sanitize(r.quick_summary || r.comparison_summary || '');
+    // AI returns r.changes[], each with original_text_snippet / revised_text_snippet / change_type / impact_severity / plain_explanation
     const changes = r.changes || r.key_differences || [];
     const recommendations = r.recommendations || [];
+    const verdict = r.overall_verdict || '';
+    const execRec = r.executive_recommendation || '';
 
     let html = '';
     if (summary) html += `<p class="quick-summary">${summary}</p>`;
+    if (verdict) html += `<p class="quick-summary"><strong>Verdict:</strong> ${DOMPurify.sanitize(verdict)}</p>`;
 
     if (changes.length) {
         html += `<h4 class="er-heading">📝 Key Differences (${changes.length})</h4>`;
         html += changes.map(c => {
-            const type = (c.type || c.change_type || 'changed').toLowerCase();
-            const icons = { added: '➕', removed: '➖', changed: '🔄', missing: '⚠️' };
+            const rawType = (c.change_type || c.type || 'changed').toUpperCase();
+            const typeMap = { ADDITION: 'added', DELETION: 'removed', MODIFICATION: 'changed', REORDERING: 'reordered' };
+            const type = typeMap[rawType] || 'changed';
+            const icons = { added: '➕', removed: '➖', changed: '🔄', reordered: '🔀' };
             const icon = icons[type] || '🔄';
+            const sevClass = (c.impact_severity || '').toLowerCase();
+            const originalSnip = c.original_text_snippet || c.original || '';
+            const revisedSnip = c.revised_text_snippet || c.revised || '';
+            const explanation = c.plain_explanation || c.impact || '';
+            const beneficiary = c.who_benefits || '';
             return `<div class="compare-change-card compare-change--${type}">
                 <div class="compare-change-header">
                     <span class="compare-change-icon">${icon}</span>
-                    <strong>${DOMPurify.sanitize(c.clause || c.section || 'Clause')}</strong>
-                    <span class="compare-change-type">${type.toUpperCase()}</span>
+                    <strong>${DOMPurify.sanitize(c.clause_or_section || c.clause || c.section || 'Clause')}</strong>
+                    <span class="compare-change-type">${DOMPurify.sanitize(rawType)}${sevClass ? ' · ' + sevClass.toUpperCase() : ''}</span>
                 </div>
-                ${c.original ? `<p class="compare-ver"><span class="cver-label">A:</span> ${DOMPurify.sanitize(c.original)}</p>` : ''}
-                ${c.revised ? `<p class="compare-ver"><span class="cver-label">B:</span> ${DOMPurify.sanitize(c.revised)}</p>` : ''}
-                ${c.impact ? `<p class="compare-impact">⚠️ ${DOMPurify.sanitize(c.impact)}</p>` : ''}
+                ${originalSnip ? `<p class="compare-ver"><span class="cver-label">A:</span> ${DOMPurify.sanitize(originalSnip)}</p>` : ''}
+                ${revisedSnip ? `<p class="compare-ver"><span class="cver-label">B:</span> ${DOMPurify.sanitize(revisedSnip)}</p>` : ''}
+                ${explanation ? `<p class="compare-impact">💡 ${DOMPurify.sanitize(explanation)}</p>` : ''}
+                ${beneficiary ? `<p class="compare-impact">👤 Benefits: ${DOMPurify.sanitize(beneficiary)}</p>` : ''}
             </div>`;
         }).join('');
     }
 
+    if (execRec) {
+        html += `<h4 class="er-heading" style="margin-top:1.5rem;">🏆 Executive Recommendation</h4>`;
+        html += `<p class="quick-summary">${DOMPurify.sanitize(execRec)}</p>`;
+    }
+
     if (recommendations.length) {
-        html += `<h4 class="er-heading" style="margin-top:1.5rem;">💡 Negotiation Recommendations</h4>`;
+        html += `<h4 class="er-heading" style="margin-top:1rem;">💡 Negotiation Recommendations</h4>`;
         html += `<ul class="tool-rec-list">${recommendations.map(rec => `<li>${DOMPurify.sanitize(typeof rec === 'string' ? rec : rec.recommendation || '')}</li>`).join('')}</ul>`;
     }
 
@@ -428,10 +454,29 @@ function renderCompareResult(r) {
 
 // ── Entities result renderer ──────────────────────────────────────────────────
 function renderEntitiesResult(r) {
-    const parties = r.parties || r.key_entities?.parties || [];
-    const dates = r.key_dates || r.dates || [];
-    const money = r.monetary_values || r.money || [];
-    const clauses = r.clauses || r.identified_clauses || [];
+    // Handle top-level error
+    if (r.error) {
+        const raw = document.getElementById('er-raw');
+        if (raw) { raw.innerHTML = `<p class="quick-summary" style="color:var(--error)">❌ ${DOMPurify.sanitize(r.error)}</p>`; raw.style.display = 'block'; }
+        document.getElementById('entities-results').style.display = 'block';
+        return;
+    }
+
+    // AI returns: parties[], important_dates[], payment_terms{}, governing_law{}, defined_terms[], recommendations[]
+    const parties = r.parties || [];
+    // important_dates is the field in the AI schema
+    const dates = r.important_dates || r.key_dates || r.dates || [];
+    // payment_terms is an object, not array — wrap it for display
+    const paymentTerms = r.payment_terms || null;
+    const defined = r.defined_terms || [];
+    const govLaw = r.governing_law || null;
+    const recommendations = r.recommendations || [];
+    const quickSummary = r.quick_summary || '';
+
+    if (quickSummary) {
+        const raw = document.getElementById('er-raw');
+        if (raw) { raw.innerHTML = `<p class="quick-summary">${DOMPurify.sanitize(quickSummary)}</p>`; raw.style.display = 'block'; }
+    }
 
     // Parties
     if (parties.length) {
@@ -443,13 +488,14 @@ function renderEntitiesResult(r) {
                     <div class="er-party-info">
                         <div class="er-party-name">${DOMPurify.sanitize(typeof p === 'string' ? p : p.name || p)}</div>
                         ${p.role ? `<div class="er-party-role">${DOMPurify.sanitize(p.role)}</div>` : ''}
+                        ${Array.isArray(p.key_obligations) && p.key_obligations.length ? `<div class="er-party-role">Obligations: ${p.key_obligations.map(o => DOMPurify.sanitize(o)).join('; ')}</div>` : ''}
                     </div>
                 </div>`).join('');
             document.getElementById('er-parties-section').style.display = 'block';
         }
     }
 
-    // Dates
+    // Dates (AI field: important_dates with label/value/note)
     if (dates.length) {
         const el = document.getElementById('er-dates');
         if (el) {
@@ -459,47 +505,73 @@ function renderEntitiesResult(r) {
                     <div class="er-timeline-content">
                         <strong>${DOMPurify.sanitize(d.label || d.type || 'Date')}</strong>
                         <span>${DOMPurify.sanitize(d.value || d.date || '')}</span>
+                        ${d.note ? `<span style="color:var(--color-text-secondary);font-size:12px;display:block;">${DOMPurify.sanitize(d.note)}</span>` : ''}
                     </div>
                 </div>`).join('');
             document.getElementById('er-dates-section').style.display = 'block';
         }
     }
 
-    // Money
-    if (money.length) {
+    // Payment terms — AI returns an object, render as a card grid
+    if (paymentTerms && typeof paymentTerms === 'object') {
         const el = document.getElementById('er-money');
         if (el) {
-            el.innerHTML = money.map(m => `
-                <div class="er-money-card">
-                    <div class="er-money-label">${DOMPurify.sanitize(m.label || m.type || 'Amount')}</div>
-                    <div class="er-money-value">${DOMPurify.sanitize(m.value || m.amount || '')}</div>
-                </div>`).join('');
-            document.getElementById('er-money-section').style.display = 'block';
+            const entries = [
+                { label: 'Amount', value: paymentTerms.amount },
+                { label: 'Currency', value: paymentTerms.currency },
+                { label: 'Schedule', value: paymentTerms.schedule },
+                { label: 'Late Penalty', value: paymentTerms.late_penalty },
+            ].filter(e => e.value && e.value !== 'N/A');
+            if (entries.length) {
+                el.innerHTML = entries.map(e => `
+                    <div class="er-money-card">
+                        <div class="er-money-label">${DOMPurify.sanitize(e.label)}</div>
+                        <div class="er-money-value">${DOMPurify.sanitize(e.value)}</div>
+                    </div>`).join('');
+                document.getElementById('er-money-section').style.display = 'block';
+            }
         }
     }
 
-    // Clauses
-    if (clauses.length) {
+    // Governing law — show in clauses table
+    const clauseRows = [];
+    if (govLaw && typeof govLaw === 'object') {
+        clauseRows.push({ clause: 'Governing Law', section: govLaw.jurisdiction || '', summary: [govLaw.court_or_arbitration, govLaw.risk_note].filter(Boolean).join(' — ') });
+    }
+    if (r.notice_period && r.notice_period !== 'N/A') {
+        clauseRows.push({ clause: 'Notice Period', section: '', summary: r.notice_period });
+    }
+    if (defined.length) {
+        defined.forEach(d => clauseRows.push({ clause: d.term || '', section: '', summary: d.definition || '' }));
+    }
+    if (clauseRows.length) {
         const tbody = document.getElementById('er-clauses-body');
         if (tbody) {
-            tbody.innerHTML = clauses.map(c => `
+            tbody.innerHTML = clauseRows.map(c => `
                 <tr>
-                    <td>${DOMPurify.sanitize(c.clause || c.name || '')}</td>
-                    <td>${DOMPurify.sanitize(c.section || '')}</td>
-                    <td>${DOMPurify.sanitize(c.summary || c.description || '')}</td>
+                    <td>${DOMPurify.sanitize(c.clause)}</td>
+                    <td>${DOMPurify.sanitize(c.section)}</td>
+                    <td>${DOMPurify.sanitize(c.summary)}</td>
                 </tr>`).join('');
             document.getElementById('er-clauses-section').style.display = 'block';
         }
     }
 
-    // Fallback if nothing structured found
-    const hasAny = parties.length || dates.length || money.length || clauses.length;
-    if (!hasAny) {
+    // Recommendations
+    if (recommendations.length) {
         const raw = document.getElementById('er-raw');
         if (raw) {
-            raw.innerHTML = `<pre class="json-dump">${DOMPurify.sanitize(JSON.stringify(r, null, 2))}</pre>`;
+            const existingHtml = raw.innerHTML;
+            raw.innerHTML = existingHtml + `<h4 class="er-heading" style="margin-top:1rem;">💡 Recommendations</h4><ul class="tool-rec-list">${recommendations.map(r2 => `<li>${DOMPurify.sanitize(typeof r2 === 'string' ? r2 : r2.recommendation || '')}</li>`).join('')}</ul>`;
             raw.style.display = 'block';
         }
+    }
+
+    // Final fallback
+    const hasAny = parties.length || dates.length || paymentTerms || clauseRows.length;
+    if (!hasAny) {
+        const raw = document.getElementById('er-raw');
+        if (raw) { raw.innerHTML += `<pre class="json-dump">${DOMPurify.sanitize(JSON.stringify(r, null, 2))}</pre>`; raw.style.display = 'block'; }
     }
     document.getElementById('entities-results').style.display = 'block';
 }
@@ -511,18 +583,55 @@ function renderTranslateResult(r, mode, lang) {
     if (!content) return;
     if (heading) heading.textContent = mode === 'language' ? `🌐 ${lang} Translation` : '✏️ Plain Language Version';
 
-    const clauses = r.clauses || r.translated_clauses || r.plain_clauses || [];
-    if (clauses.length) {
-        content.innerHTML = clauses.map(c => `
-            <div class="translate-clause">
-                <div class="tc-original">${DOMPurify.sanitize(c.original_clause || c.original || '')}</div>
-                <div class="tc-arrow">↓</div>
-                <div class="tc-plain">${DOMPurify.sanitize(c.plain_language || c.translated || c.simplified || '')}</div>
-            </div>`).join('');
+    // Handle top-level error
+    if (r.error) {
+        content.innerHTML = `<p class="quick-summary" style="color:var(--error)">❌ ${DOMPurify.sanitize(r.error)}</p>`;
+        document.getElementById('translate-results').style.display = 'block';
+        return;
+    }
+
+    // Plain Language: AI returns r.sections[] with original_text_snippet + plain_language
+    // Multilingual: AI returns r.sections[] with translated_heading + translated_text
+    // Both use r.sections — not r.clauses
+    const sections = r.sections || r.clauses || r.translated_clauses || r.plain_clauses || [];
+
+    if (sections.length) {
+        if (mode === 'language') {
+            // Multilingual translation
+            content.innerHTML = sections.map(s => `
+                <div class="translate-clause">
+                    <div class="tc-original"><strong>${DOMPurify.sanitize(s.original_heading || s.section_number || '')}</strong></div>
+                    <div class="tc-plain"><strong>${DOMPurify.sanitize(s.translated_heading || '')}</strong></div>
+                    <div class="tc-plain">${DOMPurify.sanitize(s.translated_text || s.plain_language || s.translated || s.simplified || '')}</div>
+                    ${s.key_obligation ? `<div class="tc-original" style="font-size:12px;color:var(--color-text-secondary);">📌 ${DOMPurify.sanitize(s.key_obligation)}</div>` : ''}
+                </div>`).join('');
+        } else {
+            // Plain language
+            content.innerHTML = sections.map(s => `
+                <div class="translate-clause">
+                    <div class="tc-original">${DOMPurify.sanitize(s.original_text_snippet || s.original_clause || s.original || String(s.section_number || ''))}: <em>${DOMPurify.sanitize(s.original_heading || '')}</em></div>
+                    <div class="tc-arrow">↓</div>
+                    <div class="tc-plain">${DOMPurify.sanitize(s.plain_language || s.translated || s.simplified || '')}</div>
+                    ${s.why_it_matters ? `<div class="tc-original" style="font-size:12px;color:var(--color-text-secondary);">💡 ${DOMPurify.sanitize(s.why_it_matters)}</div>` : ''}
+                </div>`).join('');
+        }
     } else {
-        const text = r.plain_text || r.translated_text || r.quick_summary || JSON.stringify(r, null, 2);
+        // Fallback for unexpected structure
+        const text = r.quick_summary || r.plain_text || r.translated_text || JSON.stringify(r, null, 2);
         content.innerHTML = `<p class="quick-summary">${DOMPurify.sanitize(text)}</p>`;
     }
+
+    // Show jargon glossary if present
+    const glossary = r.jargon_glossary || r.critical_terms_glossary || [];
+    if (glossary.length) {
+        content.innerHTML += `<h4 class="er-heading" style="margin-top:1.5rem;">📖 Glossary</h4>` +
+            glossary.map(g => `<div class="translate-clause" style="padding:8px 12px;">
+                <strong>${DOMPurify.sanitize(g.term || g.original_term || '')}</strong>
+                <span style="margin:0 8px;color:var(--color-text-secondary)">→</span>
+                ${DOMPurify.sanitize(g.plain_meaning || g.translated_term || g.plain_explanation || '')}
+            </div>`).join('');
+    }
+
     document.getElementById('translate-results').style.display = 'block';
 }
 

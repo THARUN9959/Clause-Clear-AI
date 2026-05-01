@@ -25,7 +25,7 @@ class Config:
 
     # ── File Upload ───────────────────────────────────────────────────────────
     UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
-    ALLOWED_EXTENSIONS = {"pdf", "docx", "png", "jpg", "jpeg"}
+    ALLOWED_EXTENSIONS = {"pdf", "docx", "png", "jpg", "jpeg", "txt"}
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024   # 10 MB — enforced by Flask
 
     # Accepted MIME types for server-side validation
@@ -34,6 +34,7 @@ class Config:
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "image/png",
         "image/jpeg",
+        "text/plain",
     }
 
     # ── Session Memory ────────────────────────────────────────────────────────

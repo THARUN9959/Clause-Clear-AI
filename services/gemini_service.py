@@ -12,6 +12,7 @@ Architecture:
 
 import json
 import math
+import re
 import time
 import logging
 from google import genai
@@ -25,6 +26,10 @@ client = genai.Client(api_key=Config.GEMINI_API_KEY)
 
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 2
+
+# Set to False to disable the self-critique step and save 1 API call per analysis.
+# Recommended: False on free-tier (20 req/day), True on paid tier.
+ENABLE_SELF_CRITIQUE = False
 
 # ═══════════════════════════════════════════════════════════════
 # CONTRACT TYPE DETECTION
@@ -428,6 +433,8 @@ Return ONLY valid JSON — no markdown, no text outside the JSON:
   "positive_count": <int>
 }
 
+{memory_block}
+
 CONTRACT:
 {contract_text}
 """,
@@ -488,10 +495,38 @@ def _call_gemini(prompt_text: str, temperature: float = 0.3) -> dict:
             return json.loads(raw)
 
         except json.JSONDecodeError:
-            logger.error("Gemini returned invalid JSON (attempt %d)", attempt + 1)
+            logger.error("Gemini returned invalid JSON (attempt %d/%d)", attempt + 1, MAX_RETRIES)
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY_SECONDS)
+                continue
             return {"error": "The AI returned an unexpected format. Please try again."}
         except Exception as exc:
             err = str(exc)
+            # Handle 429 quota / rate-limit errors with exponential backoff + retry
+            if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                # Try to parse the suggested retry delay from the error message
+                retry_delay = RETRY_DELAY_SECONDS * (2 ** attempt)  # exponential: 2s, 4s, 8s
+                try:
+                    match = re.search(r"retryDelay.*?(\d+)s", err)
+                    if match:
+                        retry_delay = min(int(match.group(1)), 60)
+                except Exception:
+                    pass
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(
+                        "Gemini 429 quota hit (attempt %d/%d). Waiting %ds before retry...",
+                        attempt + 1, MAX_RETRIES, retry_delay,
+                    )
+                    time.sleep(retry_delay)
+                    continue
+                logger.error("Gemini quota exhausted after %d retries: %s", MAX_RETRIES, err)
+                return {
+                    "error": (
+                        "Gemini API daily quota exceeded (free tier: 20 requests/day). "
+                        "Please wait a few minutes and try again, or upgrade your Gemini API plan at "
+                        "https://ai.google.dev/gemini-api/docs/rate-limits"
+                    )
+                }
             if "503" in err or "UNAVAILABLE" in err:
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
@@ -563,8 +598,12 @@ def find_similar_analysis(new_embedding: list, past_embeddings: list) -> dict:
 
 def classify_contract(contract_text: str) -> str:
     """Quick single-sentence classification call. Returns contract type string."""
+    # Use replace() not .format() — contract text may contain { } characters
     prompt = CLASSIFY_ONLY_PROMPT.replace("{contract_text}", contract_text[:5000])
     result = _call_gemini(prompt, temperature=0.1)
+    if "error" in result:
+        logger.warning("Classification failed, defaulting to UNKNOWN: %s", result["error"])
+        return "UNKNOWN"
     ct = result.get("contract_type", "UNKNOWN").upper()
     return ct if ct in CONTRACT_TYPES else "UNKNOWN"
 
@@ -593,11 +632,13 @@ def unified_analyze(
     contract_type = classify_contract(contract_text)
     logger.info("Contract classified as: %s", contract_type)
 
-    # Step 2: Build RAG historical context
+    # Step 2: Always generate contract text embedding upfront (used for both RAG lookup AND storage)
+    logger.info("Generating contract text embedding for session=%s", session_id)
+    rag_embedding = generate_embedding(contract_text[:8000])
+
+    # Step 3: Build RAG historical context using the contract text embedding
     historical_context = ""
-    rag_embedding = []
-    if past_embeddings:
-        rag_embedding = generate_embedding(contract_text[:8000])
+    if past_embeddings and rag_embedding:
         similar = find_similar_analysis(rag_embedding, past_embeddings)
         if similar:
             historical_context = (
@@ -608,7 +649,7 @@ def unified_analyze(
             )
             logger.info("RAG context injected from analysis_id=%s", similar["analysis_id"])
 
-    # Step 3: Build the full analysis prompt
+    # Step 4: Build the full analysis prompt
     benchmark_context = format_benchmark_for_prompt(contract_type)
     type_addendum = PROMPT_TEMPLATES.get(contract_type, PROMPT_TEMPLATES["UNKNOWN"])
     memory_block = _build_memory_block(memory_turns or [])
@@ -624,33 +665,32 @@ def unified_analyze(
     playbook_text = PLAYBOOKS.get(evaluation_standard, PLAYBOOKS[DEFAULT_STANDARD])
     prompt = prompt.replace("__PLAYBOOK_INSTRUCTION__", playbook_text)
 
-    # Step 4: Primary analysis call
+    # Step 5: Primary analysis call
     logger.info("Running primary analysis call for session=%s", session_id)
     analysis = _call_gemini(prompt, temperature=0.3)
 
     if "error" in analysis:
         return analysis
 
-    # Step 5: Self-critique loop (Phase 15)
-    logger.info("Running self-critique call for session=%s", session_id)
-    critique_prompt = SELF_CRITIQUE_PROMPT.format(
-        contract_text=contract_text[:8000],
-        analysis_json=json.dumps(analysis, indent=2)[:6000],
-    )
-    critiqued = _call_gemini(critique_prompt, temperature=0.2)
+    # Step 6: Self-critique loop (Phase 15) — skipped on free tier to conserve quota
+    if ENABLE_SELF_CRITIQUE:
+        logger.info("Running self-critique call for session=%s", session_id)
+        critique_prompt = SELF_CRITIQUE_PROMPT.format(
+            contract_text=contract_text[:8000],
+            analysis_json=json.dumps(analysis, indent=2)[:6000],
+        )
+        critiqued = _call_gemini(critique_prompt, temperature=0.2)
 
-    if "error" not in critiqued and isinstance(critiqued, dict) and "health_score" in critiqued:
-        analysis = critiqued
-        logger.info("Self-critique applied successfully")
+        if "error" not in critiqued and isinstance(critiqued, dict) and "health_score" in critiqued:
+            analysis = critiqued
+            logger.info("Self-critique applied successfully")
+        else:
+            logger.warning("Self-critique returned unusable result, keeping original analysis")
     else:
-        logger.warning("Self-critique returned unusable result, keeping original analysis")
+        logger.info("Self-critique skipped (ENABLE_SELF_CRITIQUE=False) to conserve API quota")
 
-    # Step 6: Generate embedding for this contract's high-severity risks
-    high_risks = [r for r in analysis.get("risks", []) if r.get("severity") == "HIGH"]
-    embedding_text = " ".join(r.get("explanation", "") for r in high_risks)
-    if embedding_text.strip():
-        rag_embedding = generate_embedding(embedding_text)
-
+    # Step 7: Contract text embedding is already stored from Step 2.
+    # No override — we store the contract text embedding for consistent RAG similarity.
     duration_ms = int((time.time() - start_time) * 1000)
     logger.info(
         "Analysis complete | session=%s | file=%s | type=%s | score=%s | duration=%dms",

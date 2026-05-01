@@ -60,6 +60,19 @@ python app.py
 
 Then, open your browser and navigate to `http://127.0.0.1:5000/`.
 
+## API Routes
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/upload` | POST | Upload PDF/TXT, extract text via PyPDF2/Tesseract OCR |
+| `/api/analyze` | POST | Unified Analysis (classification, health score, risks) |
+| `/api/analyze/feature` | POST | Legacy mode: summarize, translate, highlight, tag |
+| `/api/tools/checklist` | POST | Runs contract against predefined playbooks |
+| `/api/chat` | POST | Follow-up conversation with session memory |
+| `/api/history/<id>` | GET/DELETE | Load or delete a past analysis from DB |
+| `/api/export/<id>` | GET | Generate and download PDF report |
+| `/api/memory` | GET/POST | Get or clear session memory state |
+
 ## Architecture Overview
 
 ```mermaid
