@@ -247,8 +247,8 @@ def cleanup_old_sessions(db: Session, upload_folder: str, days: int = 7):
     Delete sessions older than `days` days and remove any orphaned upload files.
     Safe to call on every app startup — idempotent.
     """
-    # Use naive UTC to match what SQLite stores (avoids timezone-aware vs naive comparison errors)
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    # Use timezone-aware UTC datetime to match how datetimes are stored in the DB
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     old_sessions = db.exec(
         select(SessionModel).where(SessionModel.last_accessed < cutoff)

@@ -40,7 +40,7 @@ from db import (
 from services.memory_service import memory_manager
 from services.document_service import extract_text, allowed_file
 from services.gemini_service import (
-    unified_analyze, analyze_contract, chat_followup, FEATURE_LABELS,
+    unified_analyze, analyze_contract, chat_followup, FEATURE_LABELS, run_checklist,
 )
 from services.playbooks import PLAYBOOKS, DEFAULT_STANDARD
 
@@ -500,7 +500,6 @@ def api_clear_memory():
 @apply_limit("10 per hour")
 def api_tools_checklist():
     """Run the contract compliance checklist."""
-    from services.gemini_service import run_checklist
     data = request.get_json() or {}
     contract_text = data.get("contract_text", "").strip()
 

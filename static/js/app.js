@@ -488,6 +488,10 @@ async function sendChat(message) {
             body: JSON.stringify({ message, analysis_id: _currentAnalysisId }),
         });
         const data = await resp.json();
+        if (!resp.ok) {
+            showToast(data.error || 'Chat request failed.', 'error');
+            return;
+        }
         const aiBubble = document.createElement('div');
         aiBubble.className = 'chat-bubble chat-bubble--ai';
         aiBubble.innerHTML = DOMPurify.sanitize(data.answer || data.error || 'No response.');
@@ -597,27 +601,44 @@ async function _runSelected() {
     for (const f of features) {
         const tabId = `tab-panel-${f}`;
         if (f === 'summary_plain') {
-            // Run summarize + translate, combine
-            const [sumData, plainData] = await Promise.all([
-                runFeatureAnalysis('summarize', contractText, '', null),
-                runFeatureAnalysis('translate', contractText, '', null)
+            // Use apiFetch directly to avoid renderLegacyResult() being called with a null
+            // tabId, which would overwrite tab-panels-container and destroy all tab panels.
+            const evalStd = document.getElementById('legal-standard')?.value || 'general_commercial';
+            const [sumResp, plainResp] = await Promise.all([
+                apiFetch('/api/analyze/feature', {
+                    method: 'POST',
+                    body: JSON.stringify({ feature: 'summarize', contract_text: contractText, extra_context: '', evaluation_standard: evalStd }),
+                }),
+                apiFetch('/api/analyze/feature', {
+                    method: 'POST',
+                    body: JSON.stringify({ feature: 'translate', contract_text: contractText, extra_context: '', evaluation_standard: evalStd }),
+                }),
             ]);
+            const sumData  = sumResp.ok  ? await sumResp.json()  : null;
+            const plainData = plainResp.ok ? await plainResp.json() : null;
+            updateMemoryCount();
+
             const panel = document.getElementById(tabId);
             if (panel) {
-                const sr = sumData?.result || {};
+                const sr = sumData?.result  || {};
                 const pr = plainData?.result || {};
-                let html = '<div class="legacy-result">';
-                if (sr.quick_summary) html += `<h4 class="er-heading">📋 Summary</h4><p class="quick-summary">${DOMPurify.sanitize(sr.quick_summary)}</p>`;
-                if (sr.clauses?.length) {
-                    html += `<h4 class="er-heading">📑 Clause Summaries</h4>`;
-                    html += sr.clauses.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_text_snippet || '')}</p><p class="clause-plain">📋 ${DOMPurify.sanitize(c.plain_summary || '')}</p></div>`).join('');
+                const errMsg = (!sumResp.ok && sumData?.error) || (!plainResp.ok && plainData?.error);
+                if (errMsg) {
+                    panel.innerHTML = `<p class="quick-summary" style="color:var(--error)">❌ ${DOMPurify.sanitize(errMsg)}</p>`;
+                } else {
+                    let html = '<div class="legacy-result">';
+                    if (sr.quick_summary) html += `<h4 class="er-heading">📋 Summary</h4><p class="quick-summary">${DOMPurify.sanitize(sr.quick_summary)}</p>`;
+                    if (sr.clauses?.length) {
+                        html += `<h4 class="er-heading">📑 Clause Summaries</h4>`;
+                        html += sr.clauses.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_text_snippet || '')}</p><p class="clause-plain">📋 ${DOMPurify.sanitize(c.plain_summary || '')}</p></div>`).join('');
+                    }
+                    if (pr.sections?.length) {
+                        html += `<h4 class="er-heading" style="margin-top:1.5rem;">✏️ Plain Language</h4>`;
+                        html += pr.sections.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_text || '')}</p><p class="clause-plain">✏️ ${DOMPurify.sanitize(c.plain_language || '')}</p></div>`).join('');
+                    }
+                    html += '</div>';
+                    panel.innerHTML = html;
                 }
-                if (pr.sections?.length) {
-                    html += `<h4 class="er-heading" style="margin-top:1.5rem;">✏️ Plain Language</h4>`;
-                    html += pr.sections.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_text || '')}</p><p class="clause-plain">✏️ ${DOMPurify.sanitize(c.plain_language || '')}</p></div>`).join('');
-                }
-                html += '</div>';
-                panel.innerHTML = html;
             }
         } else {
             await runFeatureAnalysis(f, contractText, '', tabId);
