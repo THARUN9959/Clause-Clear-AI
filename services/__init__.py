@@ -1,1 +1,1 @@
-"""FAQFlow AI backend services."""
+"""ClauseClear AI backend services."""

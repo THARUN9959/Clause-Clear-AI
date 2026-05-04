@@ -43,6 +43,8 @@ from services.gemini_service import (
     unified_analyze, analyze_contract, chat_followup, FEATURE_LABELS, run_checklist,
 )
 from services.playbooks import PLAYBOOKS, DEFAULT_STANDARD
+from services.export_service import generate_pdf, _FPDF_AVAILABLE
+from sqlmodel import select as _select
 
 # ─── Logging setup ────────────────────────────────────────────────────────────
 
@@ -297,8 +299,14 @@ def api_analyze():
 
     if "error" in result:
         logger.error("Analysis error for session=%s: %s", _sid(), result["error"])
-        # Return 429 status if it's a quota error so the frontend can handle it distinctly
-        status_code = 429 if "quota" in result["error"].lower() or "rate" in result["error"].lower() else 500
+        # Return 429 if it's a quota/rate error, 503 if all providers unavailable, else 500
+        err_lower = result["error"].lower()
+        if "quota" in err_lower or "rate" in err_lower or "429" in result["error"]:
+            status_code = 429
+        elif "unavailable" in err_lower or "all ai providers" in err_lower:
+            status_code = 503
+        else:
+            status_code = 500
         return jsonify(result), status_code
 
     # Persist to DB
@@ -389,31 +397,36 @@ def api_chat():
 
     if not user_message:
         return jsonify({"error": "Message cannot be empty."}), 400
+    if len(user_message) > 2000:
+        return jsonify({"error": "Message too long. Please keep it under 2000 characters."}), 400
 
     mem = _get_memory()
     contract_text = mem.get_contract_text()
     result = chat_followup(user_message, contract_text, mem.get_turns())
 
-    # Persist to DB
+    # Always persist the user message
     save_chat_message(g.db, _sid(), analysis_id, "user", user_message)
-    answer = result.get("answer", result.get("error", ""))
-    save_chat_message(g.db, _sid(), analysis_id, "assistant", answer)
-
-    # In-memory turns
     mem.add_turn("user", user_message)
-    if "error" not in result:
-        mem.add_turn("assistant", answer)
 
-    return jsonify(result)
+    # Only persist / add assistant turn on success
+    if "error" not in result:
+        answer = result.get("answer", "")
+        save_chat_message(g.db, _sid(), analysis_id, "assistant", answer)
+        mem.add_turn("assistant", answer)
+        return jsonify(result)
+
+    # Return proper error status so the frontend's !resp.ok guard fires
+    status_code = 429 if "quota" in result["error"].lower() or "rate" in result["error"].lower() else 500
+    return jsonify(result), status_code
 
 
 # ─── API: History ─────────────────────────────────────────────────────────────
 
 @app.route("/api/history/<int:analysis_id>", methods=["GET"])
+@apply_limit("60 per hour")
 def api_get_history(analysis_id):
     """Load a past analysis from DB (no Gemini re-call)."""
-    from sqlmodel import select
-    stmt = select(AnalysisModel).where(
+    stmt = _select(AnalysisModel).where(
         AnalysisModel.id == analysis_id,
         AnalysisModel.session_id == _sid(),
     )
@@ -448,15 +461,13 @@ def api_delete_history(analysis_id):
 # ─── API: Export ──────────────────────────────────────────────────────────────
 
 @app.route("/api/export/<int:analysis_id>", methods=["GET"])
+@apply_limit("30 per hour")
 def api_export(analysis_id):
     """Generate and return a PDF report for a given analysis."""
-    from sqlmodel import select
-    from services.export_service import generate_pdf, _FPDF_AVAILABLE
-
     if not _FPDF_AVAILABLE:
         return jsonify({"error": "PDF export is not available. Please install fpdf2."}), 503
 
-    stmt = select(AnalysisModel).where(
+    stmt = _select(AnalysisModel).where(
         AnalysisModel.id == analysis_id,
         AnalysisModel.session_id == _sid(),
     )
@@ -517,6 +528,11 @@ def api_tools_checklist():
 
 
 # ─── Error handlers ───────────────────────────────────────────────────────────
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "The requested resource was not found."}), 404
+
 
 @app.errorhandler(413)
 def too_large(e):

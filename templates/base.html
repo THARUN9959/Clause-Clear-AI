@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description"
         content="ClauseClear AI — AI-powered contract analysis. Understand risks, obligations, and health scores for any legal contract.">
-    <meta name="csrf-token" content="{% if csrf_token is callable %}{{ csrf_token() }}{% endif %}">
+    <meta name="csrf-token" content="{% if csrf_token is callable %}{{ csrf_token() }}{% else %}{% endif %}">
     <title>{% block title %}ClauseClear AI{% endblock %}</title>
 
     <!-- Google Fonts -->

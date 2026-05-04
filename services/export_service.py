@@ -171,8 +171,6 @@ def generate_pdf(analysis_row) -> bytes:
             explanation = _safe_str(risk.get("explanation", ""))[:200]
 
             # Row height varies with explanation length — use multi_cell trick
-            x = pdf.get_x()
-            y = pdf.get_y()
             pdf.cell(45, 7, clause, border=1)
             pdf.set_text_color(r2, g2, b2)
             pdf.set_font("Helvetica", "B", 9)
@@ -180,24 +178,33 @@ def generate_pdf(analysis_row) -> bytes:
             pdf.set_text_color(50, 50, 50)
             pdf.set_font("Helvetica", "", 9)
             pdf.multi_cell(123, 7, explanation, border=1)
+            # Capture Y after multi_cell so subsequent sub-rows start at the correct position
+            y_after = pdf.get_y()
 
             # Suggested redline
             redline = _safe_str(risk.get("suggested_redline", ""))
             if redline:
+                pdf.set_y(y_after)
                 pdf.set_font("Helvetica", "I", 8)
                 pdf.set_text_color(80, 80, 160)
                 pdf.cell(67, 6, "", border=0)
                 pdf.multi_cell(123, 6, f"Suggested: {redline[:150]}")
+                y_after = pdf.get_y()
                 pdf.set_text_color(50, 50, 50)
 
             # Legal Standard
             sj = _safe_str(risk.get("standard_justification", ""))
             if sj and sj != "N/A":
+                pdf.set_y(y_after)
                 pdf.set_font("Helvetica", "I", 8)
                 pdf.set_text_color(22, 163, 74)
                 pdf.cell(67, 6, "", border=0)
                 pdf.multi_cell(123, 6, f"Legal Standard: {sj[:200]}")
+                y_after = pdf.get_y()
                 pdf.set_text_color(50, 50, 50)
+
+            pdf.set_y(y_after)
+            pdf.set_font("Helvetica", "", 9)
 
         pdf.ln(6)
 

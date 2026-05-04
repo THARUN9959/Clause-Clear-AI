@@ -64,7 +64,7 @@ class AnalysisModel(SQLModel, table=True):
     full_text: str = Field(default="")
     analysis_json: str = Field(default="{}")   # serialised JSON string
     health_score: int = Field(default=0)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), index=True)
     embedding: str = Field(default="")         # JSON-encoded float list
 
     session: Optional[SessionModel] = Relationship(back_populates="analyses")
@@ -191,7 +191,7 @@ def get_session_analyses(db: Session, session_id: str, page: int = 1, per_page: 
     count_stmt = select(func.count()).select_from(AnalysisModel).where(
         AnalysisModel.session_id == session_id
     )
-    total = db.exec(count_stmt).one()
+    total = db.exec(count_stmt).one_or_none() or 0
     return rows, total
 
 
@@ -245,8 +245,11 @@ def get_chat_history(db: Session, analysis_id: int, limit: int = 10) -> List[Cha
 def cleanup_old_sessions(db: Session, upload_folder: str, days: int = 7):
     """
     Delete sessions older than `days` days and remove any orphaned upload files.
+    Also evicts expired sessions from the in-process MemoryManager to prevent RAM leaks.
     Safe to call on every app startup — idempotent.
     """
+    # Import here to avoid circular imports at module load time
+    from services.memory_service import memory_manager
     # Use timezone-aware UTC datetime to match how datetimes are stored in the DB
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
@@ -256,6 +259,8 @@ def cleanup_old_sessions(db: Session, upload_folder: str, days: int = 7):
 
     for sess in old_sessions:
         logger.info("Cleaning up expired session: %s", sess.session_id)
+        # Evict from in-process memory manager to release RAM
+        memory_manager.remove_session(sess.session_id)
         # Cascade delete analyses, chat history, obligations
         analyses = db.exec(
             select(AnalysisModel).where(AnalysisModel.session_id == sess.session_id)

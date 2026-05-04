@@ -65,10 +65,13 @@ function startLoading() {
     const emptyEl = document.getElementById('results-empty');
     const contentEl = document.getElementById('results-content');
     const errEl = document.getElementById('results-error');
+    const tabBar = document.getElementById('results-tab-bar');
     if (loadEl) loadEl.style.display = 'flex';
     if (emptyEl) emptyEl.style.display = 'none';
     if (contentEl) contentEl.style.display = 'none';
     if (errEl) errEl.style.display = 'none';
+    // Hide the tab bar during loading so it doesn't float above the spinner
+    if (tabBar) tabBar.style.display = 'none';
 
     let idx = 0;
     const stageEl = document.getElementById('loading-stage');
@@ -254,6 +257,12 @@ function renderUnifiedResult(data) {
     if (!contentEl) return;
     contentEl.style.display = 'block';
 
+    // Clear any leftover tabs from a previous multi-select run
+    const tabBar = document.getElementById('results-tab-bar');
+    if (tabBar) { tabBar.style.display = 'none'; tabBar.innerHTML = ''; }
+    const tabPanels = document.getElementById('tab-panels-container');
+    if (tabPanels) tabPanels.innerHTML = '';
+
     _currentAnalysisId = data.analysis_id || null;
 
     const r = data.result || {};
@@ -288,7 +297,9 @@ function renderUnifiedResult(data) {
 
 // ─── RENDER LEGACY RESULT ──────────────────────────────────────────────────
 function renderLegacyResult(data, tabId) {
-    stopLoading();
+    // Only stop the global loading overlay for standalone (non-tabbed) runs.
+    // For multi-select tabbed runs, _runSelected manages the overlay lifecycle.
+    if (!tabId) stopLoading();
     const contentEl = document.getElementById('results-content');
     if (!contentEl) return;
     contentEl.style.display = 'block';
@@ -304,20 +315,23 @@ function renderLegacyResult(data, tabId) {
     // Feature-specific renderers
     if (r.highlighted_clauses) {
         html += renderHighlightHTML(r);
-    } else if (r.clauses || r.quick_summary || r.sections) {
+    } else if (r.clauses || r.tagged_clauses || r.quick_summary || r.sections) {
         if (r.quick_summary) html += `<p class="quick-summary">${DOMPurify.sanitize(r.quick_summary)}</p>`;
         
-        const itemsToRender = r.clauses || r.sections;
+        // tags feature returns tagged_clauses[], summarize returns clauses[], translate returns sections[]
+        const itemsToRender = r.tagged_clauses || r.clauses || r.sections;
         if (itemsToRender && itemsToRender.length) {
             html += itemsToRender.map(c => {
-                const textSnippet = c.clause || c.original_clause || c.original_text_snippet || c.original_text || '';
+                const textSnippet = c.text_snippet || c.clause || c.original_clause || c.original_text_snippet || c.original_text || '';
                 const plainLang = c.plain_language || c.plain_summary || '';
-                const summaryText = c.summary || '';
+                const summaryText = c.brief_note || c.summary || '';
+                const tagList = c.secondary_tags || c.tags || [];
+                const primaryTag = c.primary_category ? [c.primary_category, ...tagList] : tagList;
                 
                 return `
                 <div class="clause-card">
                     <div class="clause-tag-row">
-                        ${(c.tags || []).map(t => `<span class="clause-tag">${DOMPurify.sanitize(t)}</span>`).join('')}
+                        ${primaryTag.map(t => `<span class="clause-tag">${DOMPurify.sanitize(t)}</span>`).join('')}
                     </div>
                     <p class="clause-text">${DOMPurify.sanitize(textSnippet)}</p>
                     ${plainLang ? `<p class="clause-plain">✏️ ${DOMPurify.sanitize(plainLang)}</p>` : ''}
@@ -392,6 +406,16 @@ function renderHighlightHTML(r) {
 
 // ─── ANALYZE (UNIFIED) ─────────────────────────────────────────────────────
 async function runUnifiedAnalysis(contractText) {
+    // Allow analysis if text is pasted OR if a file was uploaded (upload-status visible = session has contract)
+    const hasUploadedFile = document.getElementById('upload-status')?.style.display !== 'none';
+    if (!contractText.trim() && !hasUploadedFile) {
+        showToast('Please paste or upload a contract first.', 'error');
+        return;
+    }
+    // Clear any lingering multi-select state so the UI stays consistent
+    _selected.clear();
+    document.querySelectorAll('.feature-btn[data-selectable]').forEach(b => b.classList.remove('fb--selected'));
+    _updateRunBar();
     startLoading();
     try {
         const resp = await apiFetch('/api/analyze', {
@@ -488,7 +512,7 @@ async function sendChat(message) {
             body: JSON.stringify({ message, analysis_id: _currentAnalysisId }),
         });
         const data = await resp.json();
-        if (!resp.ok) {
+        if (!resp.ok || data.error) {
             showToast(data.error || 'Chat request failed.', 'error');
             return;
         }
@@ -551,6 +575,12 @@ async function _runSelected() {
     const contractText = document.getElementById('contract-text')?.value || '';
     const features = Array.from(_selected);
     if (!features.length) return;
+    // Allow analysis if text is pasted OR if a file was uploaded (upload-status visible = session has contract)
+    const hasUploadedFile = document.getElementById('upload-status')?.style.display !== 'none';
+    if (!contractText.trim() && !hasUploadedFile) {
+        showToast('Please paste or upload a contract first.', 'error');
+        return;
+    }
 
     // Build tabs
     const tabBar = document.getElementById('results-tab-bar');
@@ -597,13 +627,14 @@ async function _runSelected() {
     });
 
     startLoading();
-    // Run sequentially
-    for (const f of features) {
+    // Run ALL features in parallel — each writes to its own independent tab panel,
+    // so there is no shared state that requires sequential ordering.
+    // Promise.allSettled ensures all tabs complete even if one errors.
+    const evalStd = document.getElementById('legal-standard')?.value || 'general_commercial';
+
+    async function _runFeatureToTab(f) {
         const tabId = `tab-panel-${f}`;
         if (f === 'summary_plain') {
-            // Use apiFetch directly to avoid renderLegacyResult() being called with a null
-            // tabId, which would overwrite tab-panels-container and destroy all tab panels.
-            const evalStd = document.getElementById('legal-standard')?.value || 'general_commercial';
             const [sumResp, plainResp] = await Promise.all([
                 apiFetch('/api/analyze/feature', {
                     method: 'POST',
@@ -614,15 +645,17 @@ async function _runSelected() {
                     body: JSON.stringify({ feature: 'translate', contract_text: contractText, extra_context: '', evaluation_standard: evalStd }),
                 }),
             ]);
-            const sumData  = sumResp.ok  ? await sumResp.json()  : null;
-            const plainData = plainResp.ok ? await plainResp.json() : null;
+            const sumData   = await sumResp.json().catch(() => ({ error: 'Failed to parse summary response.' }));
+            const plainData = await plainResp.json().catch(() => ({ error: 'Failed to parse plain language response.' }));
             updateMemoryCount();
 
+            // Check HTTP status codes too, not just body errors
+            const httpErr = (!sumResp.ok && sumData?.error) || (!plainResp.ok && plainData?.error);
             const panel = document.getElementById(tabId);
             if (panel) {
                 const sr = sumData?.result  || {};
                 const pr = plainData?.result || {};
-                const errMsg = (!sumResp.ok && sumData?.error) || (!plainResp.ok && plainData?.error);
+                const errMsg = httpErr || sumData?.error || plainData?.error || sr?.error || pr?.error;
                 if (errMsg) {
                     panel.innerHTML = `<p class="quick-summary" style="color:var(--error)">❌ ${DOMPurify.sanitize(errMsg)}</p>`;
                 } else {
@@ -634,7 +667,7 @@ async function _runSelected() {
                     }
                     if (pr.sections?.length) {
                         html += `<h4 class="er-heading" style="margin-top:1.5rem;">✏️ Plain Language</h4>`;
-                        html += pr.sections.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_text || '')}</p><p class="clause-plain">✏️ ${DOMPurify.sanitize(c.plain_language || '')}</p></div>`).join('');
+                        html += pr.sections.map(c => `<div class="clause-card"><p class="clause-text">${DOMPurify.sanitize(c.original_text_snippet || c.original_text || '')}</p><p class="clause-plain">✏️ ${DOMPurify.sanitize(c.plain_language || '')}</p></div>`).join('');
                     }
                     html += '</div>';
                     panel.innerHTML = html;
@@ -644,6 +677,8 @@ async function _runSelected() {
             await runFeatureAnalysis(f, contractText, '', tabId);
         }
     }
+
+    await Promise.allSettled(features.map(f => _runFeatureToTab(f)));
     stopLoading();
     const chatSection = document.getElementById('chat-section');
     if (chatSection) chatSection.style.display = 'block';

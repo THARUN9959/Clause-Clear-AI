@@ -1,8 +1,16 @@
 """Session memory service for ClauseClear AI — Memento pattern for conversation history."""
 
 import copy
-from datetime import datetime
+import logging
+from collections import OrderedDict
+from datetime import datetime, timezone
 from config import Config
+
+logger = logging.getLogger(__name__)
+
+# Maximum number of session memory objects to keep in RAM at once.
+# Oldest sessions are evicted when this limit is exceeded.
+_MAX_SESSIONS = 500
 
 
 class SessionMemory:
@@ -26,7 +34,7 @@ class SessionMemory:
         self.turns.append({
             "role": role,
             "content": content,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
         # Keep only the last N turns
@@ -39,9 +47,12 @@ class SessionMemory:
         self.analysis_history.append({
             "feature": feature,
             "summary": result_summary,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "contract_name": self.contract_name,
         })
+        # Cap analysis history at the same limit as turns to prevent unbounded growth
+        if len(self.analysis_history) > Config.MAX_MEMORY_TURNS:
+            self.analysis_history = self.analysis_history[-Config.MAX_MEMORY_TURNS:]
 
     def set_contract(self, text, name=""):
         """Set the active contract text and filename."""
@@ -102,7 +113,7 @@ class SessionMemory:
             "contract_text": self.contract_text,
             "contract_name": self.contract_name,
             "analysis_history": copy.deepcopy(self.analysis_history),
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     def restore_snapshot(self, snapshot):
@@ -116,19 +127,28 @@ class SessionMemory:
 class MemoryManager:
     """
     Caretaker — manages SessionMemory instances per Flask session ID.
+    Uses an OrderedDict with LRU eviction to cap RAM usage at _MAX_SESSIONS entries.
     """
 
     def __init__(self):
-        self._sessions = {}
+        self._sessions: OrderedDict[str, SessionMemory] = OrderedDict()
 
-    def get_session(self, session_id):
-        """Get or create a SessionMemory for the given session ID."""
-        if session_id not in self._sessions:
-            self._sessions[session_id] = SessionMemory()
-        return self._sessions[session_id]
+    def get_session(self, session_id: str) -> SessionMemory:
+        """Get or create a SessionMemory for the given session ID (LRU bump on access)."""
+        if session_id in self._sessions:
+            # Move to end (most-recently-used)
+            self._sessions.move_to_end(session_id)
+            return self._sessions[session_id]
+        mem = SessionMemory()
+        self._sessions[session_id] = mem
+        # Evict oldest entry if over limit
+        if len(self._sessions) > _MAX_SESSIONS:
+            evicted_id, _ = self._sessions.popitem(last=False)
+            logger.debug("MemoryManager: evicted session %s (limit=%d)", evicted_id, _MAX_SESSIONS)
+        return mem
 
-    def remove_session(self, session_id):
-        """Delete a session entirely."""
+    def remove_session(self, session_id: str) -> None:
+        """Explicitly delete a session (called during DB cleanup)."""
         self._sessions.pop(session_id, None)
 
 

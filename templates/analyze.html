@@ -78,27 +78,29 @@
                 <button class="feature-btn feature-btn--primary" data-feature="unified" id="btn-unified">
                     <span class="fb-icon">🔬</span>
                     <span class="fb-label">Full Analysis</span>
-                    <span class="fb-badge">NEW</span>
                 </button>
 
                 <!-- SELECTABLE features -->
-                <button class="feature-btn feature-btn--selectable" data-feature="summary_plain" data-selectable="true" id="btn-summary-plain">
+                <button class="feature-btn feature-btn--selectable" data-feature="summary_plain" data-selectable="true"
+                    id="btn-summary-plain">
                     <span class="fb-check">✓</span>
                     <span class="fb-icon">📋</span>
                     <span class="fb-label">Summary &amp; Plain Language</span>
                 </button>
 
-                <button class="feature-btn feature-btn--selectable" data-feature="tags" data-selectable="true" id="btn-tags">
+                <button class="feature-btn feature-btn--selectable" data-feature="tags" data-selectable="true"
+                    id="btn-tags">
                     <span class="fb-check">✓</span>
                     <span class="fb-icon">🏷️</span>
                     <span class="fb-label">Tag Clauses</span>
                 </button>
 
-                <button class="feature-btn feature-btn--selectable" data-feature="highlight" data-selectable="true" id="btn-highlight">
+                <button class="feature-btn feature-btn--selectable" data-feature="highlight" data-selectable="true"
+                    id="btn-highlight">
                     <span class="fb-check">✓</span>
                     <span class="fb-icon">🚨</span>
                     <span class="fb-label">HIGH_RISK Clause Highlighter</span>
-                    <span class="fb-badge fb-badge--new">NEW</span>
+
                 </button>
             </div>
 
@@ -166,7 +168,8 @@
         <div class="results-empty" id="results-empty">
             <div class="empty-icon">⚖️</div>
             <h3>Ready to Analyze</h3>
-            <p>Select one or more analysis types, then click <strong>Run Selected</strong> — or click <strong>Full Analysis</strong> for everything at once.</p>
+            <p>Select one or more analysis types, then click <strong>Run Selected</strong> — or click <strong>Full
+                    Analysis</strong> for everything at once.</p>
         </div>
 
         <!-- ── Results content ───────────────────── -->
@@ -180,11 +183,10 @@
                 <div class="health-meter">
                     <div class="health-gauge-wrap">
                         <svg class="health-gauge" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
-                            <circle class="gauge-track" cx="60" cy="60" r="50" fill="none" stroke-width="10"/>
-                            <circle class="gauge-fill" id="gauge-fill" cx="60" cy="60" r="50"
-                                fill="none" stroke-width="10"
-                                stroke-dasharray="314" stroke-dashoffset="314"
-                                transform="rotate(-90 60 60)"/>
+                            <circle class="gauge-track" cx="60" cy="60" r="50" fill="none" stroke-width="10" />
+                            <circle class="gauge-fill" id="gauge-fill" cx="60" cy="60" r="50" fill="none"
+                                stroke-width="10" stroke-dasharray="314" stroke-dashoffset="314"
+                                transform="rotate(-90 60 60)" />
                         </svg>
                         <div class="gauge-center">
                             <span class="gauge-score" id="gauge-score">—</span>
@@ -261,11 +263,11 @@
                 <form class="chat-input-form" id="chat-form">
                     <div class="input-wrapper">
                         <textarea id="chat-input" class="chat-input"
-                            placeholder="Ask a follow-up question about the contract..."
-                            rows="1" maxlength="2000"></textarea>
+                            placeholder="Ask a follow-up question about the contract..." rows="1"
+                            maxlength="2000"></textarea>
                         <button type="submit" class="send-btn" id="send-btn" aria-label="Send">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                                 stroke="currentColor" stroke-width="2">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
                                 <path d="M22 2L11 13"></path>
                                 <path d="M22 2L15 22L11 13L2 9L22 2Z"></path>
                             </svg>

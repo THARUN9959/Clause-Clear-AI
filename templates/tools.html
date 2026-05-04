@@ -643,7 +643,7 @@ function renderChecklistResult(r) {
         const container = document.getElementById('checklist-items');
         const scoreRow = document.querySelector('#tool-checklist .checklist-score-row');
         if (scoreRow) scoreRow.style.display = 'none';
-        if (container) container.innerHTML = `<p class="quick-summary" style="color:var(--color-text-danger);padding:1rem 0;">❌ ${DOMPurify.sanitize(r.error)}</p>`;
+        if (container) container.innerHTML = `<p class="quick-summary" style="color:var(--error);padding:1rem 0;">❌ ${DOMPurify.sanitize(r.error)}</p>`;
         document.getElementById('checklist-results').style.display = 'block';
         return;
     }
